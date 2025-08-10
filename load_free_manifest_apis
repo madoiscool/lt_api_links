@@ -7,6 +7,13 @@
             "enabled": true
         },
         {
+            "name": "Sushi",
+            "url": "https://raw.githubusercontent.com/sushi-dev55/sushitools-games-repo/refs/heads/main/<appid>.zip",
+            "success_code": 200,
+            "unavailable_code": 404,
+            "enabled": true
+        },
+        {
             "name": "Furcate",
             "url": "https://furcate.eu/FILES/<appid>.zip",
             "success_code": 200,
