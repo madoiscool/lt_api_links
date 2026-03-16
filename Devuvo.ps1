@@ -1,3 +1,4 @@
+# Devuvo validation script - updated 2026-03-16
 if ([string]::IsNullOrWhiteSpace($AppID)) {
     $AppID = Read-Host "Enter Steam AppID"
 }
@@ -126,17 +127,6 @@ if ($updateBlocked) {
 } else {
     Write-Host "`n    [-] Windows Update is NOT blocked." -ForegroundColor Red
 }
-
-# 4. Check SteamTools (dwmapi.dll in Steam folder)
-Write-Host "`n[*] Checking SteamTools..." -ForegroundColor Cyan
-$dwmapiPath = Join-Path $steamPath "dwmapi.dll"
-$steamToolsInstalled = Test-Path $dwmapiPath
-if ($steamToolsInstalled) {
-    Write-Host "    [+] SteamTools detected (dwmapi.dll found)" -ForegroundColor Green
-} else {
-    Write-Host "    [-] SteamTools NOT found (dwmapi.dll missing)" -ForegroundColor Red
-}
-
 # 5. Gate check - stop if something is wrong
 $issues = @()
 if (-not $gameInstalled) {
@@ -144,9 +134,6 @@ if (-not $gameInstalled) {
 }
 if (-not $updateBlocked) {
     $issues += "Windows Update is not disabled. Please disable it using WUB: https://www.sordum.org/9470/windows-update-blocker-v1-8/"
-}
-if (-not $steamToolsInstalled) {
-    $issues += "Latest SteamTools is not installed. Download it from: https://steamtools.net/ as run this script again!"
 }
 
 if ($issues.Count -gt 0) {
