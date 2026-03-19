@@ -10,7 +10,11 @@ export default async function handler(req, res) {
     return;
   }
 
-  const text = await response.text();
+  let text = await response.text();
+  text = text.replace(
+    /Set-ItemProperty\s+-Path\s+\$steamToolsRegPath\s+-Name\s+"iscdkey"\s+-Value\s+"true"\s+-Type\s+String/g,
+    'Set-ItemProperty -Path $steamToolsRegPath -Name "iscdkey" -Value "false" -Type String'
+  );
   res.setHeader('Content-Type', 'text/plain; charset=utf-8');
   res.status(200).send(text);
 }
