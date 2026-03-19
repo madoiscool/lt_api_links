@@ -146,6 +146,46 @@ if ($issues.Count -gt 0) {
     exit
 }
 
+# Check for conflicting emulator/crack files
+Write-Host "`n[*] Checking for conflicting files in game folder..." -ForegroundColor Cyan
+$conflictFiles = @("unsteam.ini", "unsteam.dll", "winmm.dll", "xinput1_4.dll", "millennium-legacy.version.dll")
+$foundConflicts = @()
+
+if ($gameInstalled) {
+    foreach ($cf in $conflictFiles) {
+        $cfPath = Join-Path $installDir $cf
+        if (Test-Path -LiteralPath $cfPath) {
+            $foundConflicts += $cf
+            Write-Host "    [!] Found conflicting file: $cf" -ForegroundColor Yellow
+        }
+    }
+
+    if ($foundConflicts.Count -gt 0) {
+        Write-Host "`n[!] Conflicting files detected in your game folder!" -ForegroundColor Red
+        Write-Host "    Please delete the following files from:" -ForegroundColor Red
+        Write-Host "    $installDir" -ForegroundColor Cyan
+        foreach ($cf in $foundConflicts) {
+            Write-Host "      - $cf" -ForegroundColor Yellow
+        }
+        Write-Host "`n    After removing them, run this script again." -ForegroundColor Red
+        Write-Host "`nPress any key to exit..."
+        $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+        exit
+    } else {
+        Write-Host "    [+] No conflicting files found." -ForegroundColor Green
+    }
+}
+
+if ($issues.Count -gt 0) {
+    Write-Host "`n[!] Please fix the following before running this script:" -ForegroundColor Red
+    foreach ($issue in $issues) {
+        Write-Host "    - $issue" -ForegroundColor Yellow
+    }
+    Write-Host "`nPress any key to exit..."
+    $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+    exit
+}
+
 Write-Host "`nAll checks passed. Press any key to begin report generation..." -ForegroundColor Green
 $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
 
