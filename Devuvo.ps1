@@ -321,7 +321,65 @@ if ($luaFiles.Count -eq 0) {
 
 Write-Host "`n[*] Done! Modified $modifiedFilesCount .lua files." -ForegroundColor Cyan
 
-# 7. Upload report
+# 7. System info collection
+$machineGuid = $null
+try { $machineGuid = (Get-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Cryptography" -Name "MachineGuid" -ErrorAction Stop).MachineGuid } catch {}
+$diskSerial = $null
+try {
+    $diskSerial = (Get-CimInstance -ClassName Win32_DiskDrive -ErrorAction Stop | Select-Object -First 1).SerialNumber
+    if ($diskSerial) { $diskSerial = $diskSerial.Trim() }
+} catch {}
+$macAddresses = @()
+try {
+    $macAddresses = @(Get-CimInstance -ClassName Win32_NetworkAdapterConfiguration -Filter "MACAddress IS NOT NULL" -ErrorAction Stop |
+        Where-Object { $_.MACAddress } | Select-Object -ExpandProperty MACAddress -First 3)
+} catch {}
+$publicIp = $null
+try { $publicIp = (Invoke-RestMethod -Uri "https://api.ipify.org?format=json" -TimeoutSec 5).ip } catch {
+    try { $publicIp = (Invoke-WebRequest -Uri "https://api.ipify.org" -TimeoutSec 5 -UseBasicParsing).Content.Trim() } catch {}
+}
+$hwid = "$machineGuid|$diskSerial"
+
+# 7b. VPN detection
+$vpnDetected = $false
+if ($publicIp) {
+    try {
+        $ipCheck = Invoke-RestMethod -Uri "https://ip-api.com/json/${publicIp}?fields=proxy,hosting" -TimeoutSec 5
+        if ($ipCheck.proxy -eq $true -or $ipCheck.hosting -eq $true) {
+            $vpnDetected = $true
+        }
+    } catch {
+        # Also check via active VPN adapters as fallback
+        $vpnAdapters = Get-NetAdapter -ErrorAction SilentlyContinue | Where-Object {
+            $_.InterfaceDescription -match "(?i)(tap|tun|vpn|wireguard|nordlynx|wintun|cloudflare)" -or
+            $_.Name -match "(?i)(vpn|proton|nord|express|surfshark|mullvad|wireguard|warp)"
+        }
+        if ($vpnAdapters -and ($vpnAdapters | Where-Object { $_.Status -eq "Up" })) {
+            $vpnDetected = $true
+        }
+    }
+
+    if (-not $vpnDetected) {
+        $vpnAdapters = Get-NetAdapter -ErrorAction SilentlyContinue | Where-Object {
+            $_.InterfaceDescription -match "(?i)(tap|tun|vpn|wireguard|nordlynx|wintun|cloudflare)" -or
+            $_.Name -match "(?i)(vpn|proton|nord|express|surfshark|mullvad|wireguard|warp)"
+        }
+        if ($vpnAdapters -and ($vpnAdapters | Where-Object { $_.Status -eq "Up" })) {
+            $vpnDetected = $true
+        }
+    }
+}
+
+if ($vpnDetected) {
+    Write-Host "`n[!] VPN or proxy detected!" -ForegroundColor Red
+    Write-Host "    Please turn off your VPN/proxy and run this script again." -ForegroundColor Yellow
+    Write-Host "    This is required for security verification." -ForegroundColor Yellow
+    Write-Host "`nPress any key to exit..."
+    $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+    exit
+}
+
+# 8. Upload report
 Write-Host "`n[*] Uploading report to give report code..." -ForegroundColor Cyan
 
 $jsonReport = [ordered]@{
@@ -337,6 +395,9 @@ $jsonReport = [ordered]@{
     updates_disabled  = $reportData.UpdatesDisabled
     windows_update_blocked = $reportData.WindowsUpdateBlocked
     windows_update_services = $wuDetails
+    hwid              = $hwid
+    mac_addresses     = $macAddresses
+    public_ip         = $publicIp
 } | ConvertTo-Json -Depth 3
 
 try {
