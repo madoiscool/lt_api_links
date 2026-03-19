@@ -160,6 +160,18 @@ if ($gameInstalled) {
         }
     }
 
+    # Additional checks for Resident Evil Requiem (AppID 3764200)
+    if ($AppID -eq '3764200') {
+        $reConflicts = @("gameoverlayrenderer64.dll", "version.dll", "dinput8.dll")
+        foreach ($rc in $reConflicts) {
+            $rcPath = Join-Path $installDir $rc
+            if (Test-Path -LiteralPath $rcPath) {
+                $foundConflicts += $rc
+                Write-Host "    [!] Found conflicting file: $rc" -ForegroundColor Yellow
+            }
+        }
+    }
+
     if ($foundConflicts.Count -gt 0) {
         Write-Host "`n[!] Conflicting files detected in your game folder!" -ForegroundColor Red
         Write-Host "    Please delete the following files from:" -ForegroundColor Red
