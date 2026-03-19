@@ -170,6 +170,28 @@ if ($gameInstalled) {
                 Write-Host "    [!] Found conflicting file: $rc" -ForegroundColor Yellow
             }
         }
+
+        # Check re9.exe size (must be 520-525 MB)
+        $re9Exe = Join-Path $installDir "re9.exe"
+        if (Test-Path -LiteralPath $re9Exe) {
+            $re9SizeMB = (Get-Item -LiteralPath $re9Exe).Length / 1MB
+            if ($re9SizeMB -lt 520 -or $re9SizeMB -gt 525) {
+                Write-Host "`n[!] re9.exe size is invalid: $([math]::Round($re9SizeMB, 1)) MB (expected 520-525 MB)" -ForegroundColor Red
+                Write-Host "    Your game files may be corrupted or modified." -ForegroundColor Yellow
+                Write-Host "    Please verify your game files through Steam and try again." -ForegroundColor Yellow
+                Write-Host "`nPress any key to exit..."
+                $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+                exit
+            } else {
+                Write-Host "    [+] re9.exe size OK: $([math]::Round($re9SizeMB, 1)) MB" -ForegroundColor Green
+            }
+        } else {
+            Write-Host "    [-] re9.exe not found in game folder." -ForegroundColor Red
+            Write-Host "    Please verify your game files through Steam and try again." -ForegroundColor Yellow
+            Write-Host "`nPress any key to exit..."
+            $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+            exit
+        }
     }
 
     if ($foundConflicts.Count -gt 0) {
