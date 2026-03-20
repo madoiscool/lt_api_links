@@ -237,10 +237,10 @@ try {
 $reportData.FolderSize = $folderSize
 Write-Host "[+] Folder Size: $folderSize bytes" -ForegroundColor Green
 
-# Exe files in game root folder
+# Exe files in game folder (recursive)
 $exeFiles = @()
 try {
-    $exeFiles = @(Get-ChildItem -LiteralPath $installDir -Filter "*.exe" -File -Force -ErrorAction Stop | Select-Object -ExpandProperty Name)
+    $exeFiles = @(Get-ChildItem -LiteralPath $installDir -Filter "*.exe" -Recurse -File -Force -ErrorAction Stop | Select-Object -ExpandProperty Name)
 } catch {
     Write-Host "    [!] Could not read exe files: $_" -ForegroundColor Yellow
 }
