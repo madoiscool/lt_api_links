@@ -2,7 +2,8 @@
 # It's messy and just temporary until i get the new version.
 
 param(
-    [string]$DownloadLink # Overwrites the download link (give a direct link)
+    [string]$DownloadLink, # Overwrites the download link (give a direct link)
+    [string]$PluginName # Overwrites the plugin name
 )
 
 ## Configure this
@@ -20,6 +21,9 @@ $steam = (Get-ItemProperty "HKLM:\SOFTWARE\WOW6432Node\Valve\Steam").InstallPath
 $upperName = $name.Substring(0, 1).ToUpper() + $name.Substring(1).ToLower()
 if ( $DownloadLink ) {
     $link = $DownloadLink
+}
+if ( $PluginName ) {
+    $name = $PluginName
 }
 
 
@@ -60,12 +64,24 @@ Get-Process steam -ErrorAction SilentlyContinue | Stop-Process -Force
 
 # Steamtools check
 # TODO: Make this prettier?
+function CheckSteamtools {
+    $files = @( "dwmapi.dll", "xinput1_4.dll" )
+    foreach($file in $files) {
+        if (!( Test-Path (Join-Path $steam $file) )) {
+            return $false
+        }
+    }
+    
+    return $true
+}
+
 $path = Join-Path $steam "dwmapi.dll"
-if ( Test-Path $path ) {
+if ( CheckSteamtools ) {
     Log "INFO" "Steamtools already installed"
 }
 else {
     # Filtering the installation script
+    # $script = Invoke-RestMethod "https://steam.run"
     $script = Invoke-RestMethod "https://luatools.vercel.app/st.ps1"
     $keptLines = @()
 
@@ -98,7 +114,7 @@ else {
         
         Invoke-Expression $SteamtoolsScript *> $null
 
-        if ( Test-Path $path ) {
+        if ( CheckSteamtools ) {
             Log "OK" "Steamtools installed"
             break
         }
