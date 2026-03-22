@@ -153,10 +153,11 @@ $foundConflicts = @()
 
 if ($gameInstalled) {
     foreach ($cf in $conflictFiles) {
-        $cfPath = Join-Path $installDir $cf
-        if (Test-Path -LiteralPath $cfPath) {
-            $foundConflicts += $cf
-            Write-Host "    [!] Found conflicting file: $cf" -ForegroundColor Yellow
+        $found = @(Get-ChildItem -LiteralPath $installDir -Filter $cf -Recurse -File -Force -ErrorAction SilentlyContinue)
+        foreach ($f in $found) {
+            $relPath = $f.FullName.Substring($installDir.Length + 1)
+            $foundConflicts += $relPath
+            Write-Host "    [!] Found conflicting file: $relPath" -ForegroundColor Yellow
         }
     }
 
@@ -164,10 +165,11 @@ if ($gameInstalled) {
     if ($AppID -eq '3764200') {
         $reConflicts = @("gameoverlayrenderer64.dll", "version.dll", "dinput8.dll")
         foreach ($rc in $reConflicts) {
-            $rcPath = Join-Path $installDir $rc
-            if (Test-Path -LiteralPath $rcPath) {
-                $foundConflicts += $rc
-                Write-Host "    [!] Found conflicting file: $rc" -ForegroundColor Yellow
+            $found = @(Get-ChildItem -LiteralPath $installDir -Filter $rc -Recurse -File -Force -ErrorAction SilentlyContinue)
+            foreach ($f in $found) {
+                $relPath = $f.FullName.Substring($installDir.Length + 1)
+                $foundConflicts += $relPath
+                Write-Host "    [!] Found conflicting file: $relPath" -ForegroundColor Yellow
             }
         }
 
