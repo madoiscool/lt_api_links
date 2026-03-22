@@ -235,7 +235,8 @@ try {
     $folderSize = (Get-ChildItem -LiteralPath $installDir -Recurse -File -Force -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum
 } catch {}
 $reportData.FolderSize = $folderSize
-Write-Host "[+] Folder Size: $folderSize bytes" -ForegroundColor Green
+$folderSizeGB = [math]::Round($folderSize / 1GB, 2)
+Write-Host "[+] Folder Size: $folderSizeGB GB ($folderSize bytes)" -ForegroundColor Green
 
 # Exe files in game folder (recursive)
 $exeFiles = @()
