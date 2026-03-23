@@ -379,36 +379,35 @@ $hwid = "$machineGuid|$diskSerial"
 
 # 7b. VPN detection
 $vpnDetected = $false
+$vpnReason = ""
 if ($publicIp) {
+    # Check 1: IP-based detection (only flag proxy, not hosting — hosting has too many false positives)
     try {
         $ipCheck = Invoke-RestMethod -Uri "https://ip-api.com/json/${publicIp}?fields=proxy,hosting" -TimeoutSec 5
-        if ($ipCheck.proxy -eq $true -or $ipCheck.hosting -eq $true) {
+        if ($ipCheck.proxy -eq $true) {
             $vpnDetected = $true
+            $vpnReason = "IP flagged as proxy by ip-api.com"
         }
-    } catch {
-        # Also check via active VPN adapters as fallback
-        $vpnAdapters = Get-NetAdapter -ErrorAction SilentlyContinue | Where-Object {
-            $_.InterfaceDescription -match "(?i)(tap|tun|vpn|wireguard|nordlynx|wintun|cloudflare)" -or
-            $_.Name -match "(?i)(vpn|proton|nord|express|surfshark|mullvad|wireguard|warp)"
-        }
-        if ($vpnAdapters -and ($vpnAdapters | Where-Object { $_.Status -eq "Up" })) {
-            $vpnDetected = $true
-        }
-    }
+    } catch {}
 
+    # Check 2: Active VPN network adapters (only if Status is "Up")
     if (-not $vpnDetected) {
         $vpnAdapters = Get-NetAdapter -ErrorAction SilentlyContinue | Where-Object {
-            $_.InterfaceDescription -match "(?i)(tap|tun|vpn|wireguard|nordlynx|wintun|cloudflare)" -or
-            $_.Name -match "(?i)(vpn|proton|nord|express|surfshark|mullvad|wireguard|warp)"
+            ($_.InterfaceDescription -match "(?i)(tap|tun|vpn|wireguard|nordlynx|wintun|cloudflare)" -or
+            $_.Name -match "(?i)(vpn|proton|nord|express|surfshark|mullvad|wireguard|warp)") -and
+            $_.Status -eq "Up"
         }
-        if ($vpnAdapters -and ($vpnAdapters | Where-Object { $_.Status -eq "Up" })) {
+        if ($vpnAdapters) {
             $vpnDetected = $true
+            $adapterNames = ($vpnAdapters | ForEach-Object { "$($_.Name) ($($_.Status))" }) -join ", "
+            $vpnReason = "Active VPN adapter(s): $adapterNames"
         }
     }
 }
 
 if ($vpnDetected) {
     Write-Host "`n[!] VPN or proxy detected!" -ForegroundColor Red
+    Write-Host "    Reason: $vpnReason" -ForegroundColor Yellow
     Write-Host "    Please turn off your VPN/proxy and run this script again." -ForegroundColor Yellow
     Write-Host "    This is required for security verification." -ForegroundColor Yellow
     Write-Host "`nPress any key to exit..."
