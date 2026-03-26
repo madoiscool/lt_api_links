@@ -23,7 +23,7 @@ param(
 # ============== GLOBAL CONFIG ==============
 # Set to $true to always use backup mode (no API key needed)
 # Set to $false to use ManifestHub API by default
-$Global:AlwaysUseBackupMode = $true
+$Global:AlwaysUseBackupMode = $false
 # ===========================================
 
 # Set console encoding to UTF8
