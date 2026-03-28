@@ -436,7 +436,19 @@ try {
 
         Set-Clipboard -Value $pasteCode
         Write-Host "`n    [+] Report uploaded successfully!" -ForegroundColor Green
-        Write-Host "    [+] D-Report Code: $pasteCode (copied to clipboard)" -ForegroundColor Cyan
+        Write-Host ""
+        Write-Host "    ============================================" -ForegroundColor Magenta
+        Write-Host "    ||                                        ||" -ForegroundColor Magenta
+        Write-Host "    ||   D-Report Code: " -ForegroundColor Magenta -NoNewline
+        Write-Host "$pasteCode" -ForegroundColor Yellow -NoNewline
+        Write-Host (" " * (21 - $pasteCode.Length)) -NoNewline
+        Write-Host "||" -ForegroundColor Magenta
+        Write-Host "    ||                                        ||" -ForegroundColor Magenta
+        Write-Host "    ||   Send this code inside your ticket!   ||" -ForegroundColor Magenta
+        Write-Host "    ||                                        ||" -ForegroundColor Magenta
+        Write-Host "    ============================================" -ForegroundColor Magenta
+        Write-Host ""
+        Write-Host "    (copied to clipboard)" -ForegroundColor Green
     } else {
         Write-Host "    [-] Upload succeeded but no URL returned." -ForegroundColor Yellow
         Write-Host "    Response: $($response | ConvertTo-Json -Compress)" -ForegroundColor DarkGray
