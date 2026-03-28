@@ -201,8 +201,7 @@ if ($issues.Count -gt 0) {
     exit
 }
 
-Write-Host "`nAll checks passed. Press any key to begin report generation..." -ForegroundColor Green
-$null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+Write-Host "`nAll checks passed. Generating report..." -ForegroundColor Green
 
 # ---- Begin report generation ----
 
