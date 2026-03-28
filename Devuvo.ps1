@@ -5,14 +5,14 @@ if ([string]::IsNullOrWhiteSpace($AppID)) {
 
 # ---- Report data collection ----
 $reportData = [ordered]@{
-    AppID              = $AppID
-    GameName           = "N/A"
-    Installed          = $false
-    FolderSize         = "N/A"
-    HasGoldberg        = $false
-    GoldbergFiles      = @()
-    UpdatesDisabled    = $false
-    LuaFileFound       = $false
+    AppID                = $AppID
+    GameName             = "N/A"
+    Installed            = $false
+    FolderSize           = "N/A"
+    HasGoldberg          = $false
+    GoldbergFiles        = @()
+    UpdatesDisabled      = $false
+    LuaFileFound         = $false
     WindowsUpdateBlocked = $false
 }
 
@@ -92,7 +92,8 @@ $gameInstalled = $installDir -and (Test-Path $installDir)
 if ($gameInstalled) {
     Write-Host "[+] Found Game: $gameName" -ForegroundColor Green
     Write-Host "[+] Install Directory: $installDir" -ForegroundColor Green
-} else {
+}
+else {
     Write-Host "[-] AppID $AppID is not installed on this system." -ForegroundColor Red
 }
 
@@ -109,11 +110,13 @@ if ($wuauserv) {
     if (($startType -eq "Disabled" -or [string]::IsNullOrWhiteSpace($startType)) -and $status -eq "Stopped") {
         Write-Host "    [+] Windows Update (wuauserv): Disabled and Stopped" -ForegroundColor Green
         $wuDetails += "Windows Update (wuauserv): Disabled and Stopped"
-    } else {
+    }
+    else {
         Write-Host "    [!] Windows Update (wuauserv): $status (StartType: $startType)" -ForegroundColor Yellow
         $wuDetails += "Windows Update (wuauserv): $status (StartType: $startType)"
     }
-} else {
+}
+else {
     Write-Host "    [~] Windows Update (wuauserv): Service not found (OK)" -ForegroundColor DarkGray
     $wuDetails += "Windows Update (wuauserv): Not found"
 }
@@ -124,7 +127,8 @@ $updateBlocked = $wuauserv -and $wuauserv.Status -eq "Stopped" -and ($wuauserv.S
 if ($updateBlocked) {
     Write-Host "`n    [+] Windows Update is BLOCKED." -ForegroundColor Green
     $reportData.WindowsUpdateBlocked = $true
-} else {
+}
+else {
     Write-Host "`n    [-] Windows Update is NOT blocked." -ForegroundColor Red
 }
 # 5. Gate check - stop if something is wrong
@@ -132,63 +136,18 @@ $issues = @()
 if (-not $gameInstalled) {
     $issues += "Game with AppID $AppID is not installed. Please install it first."
 }
+else {
+    $quickSize = 0
+    try {
+        $quickSize = (Get-ChildItem -LiteralPath $installDir -Recurse -File -Force -ErrorAction SilentlyContinue | Select-Object -First 5 | Measure-Object -Property Length -Sum).Sum
+    }
+    catch {}
+    if ($quickSize -eq 0) {
+        $issues += "Game folder is empty (0 bytes). The game may not be fully downloaded."
+    }
+}
 if (-not $updateBlocked) {
     $issues += "Windows Update is not disabled. Please disable it using WUB: https://www.sordum.org/9470/windows-update-blocker-v1-8/"
-}
-
-if ($issues.Count -gt 0) {
-    Write-Host "`n[!] Please fix the following before running this script:" -ForegroundColor Red
-    foreach ($issue in $issues) {
-        Write-Host "    - $issue" -ForegroundColor Yellow
-    }
-    Write-Host "`nPress any key to exit..."
-    $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
-    exit
-}
-
-# Check for conflicting emulator/crack files
-Write-Host "`n[*] Checking for conflicting files in game folder..." -ForegroundColor Cyan
-$conflictFiles = @("unsteam.ini", "unsteam.dll", "winmm.dll", "xinput1_4.dll", "millennium-legacy.version.dll")
-$foundConflicts = @()
-
-if ($gameInstalled) {
-    foreach ($cf in $conflictFiles) {
-        $found = @(Get-ChildItem -LiteralPath $installDir -Filter $cf -Recurse -File -Force -ErrorAction SilentlyContinue)
-        foreach ($f in $found) {
-            $relPath = $f.FullName.Substring($installDir.Length + 1)
-            $foundConflicts += $relPath
-            Write-Host "    [!] Found conflicting file: $relPath" -ForegroundColor Yellow
-        }
-    }
-
-    # Additional checks for Resident Evil Requiem (AppID 3764200)
-    if ($AppID -eq '3764200') {
-        $reConflicts = @("gameoverlayrenderer64.dll", "version.dll", "dinput8.dll")
-        foreach ($rc in $reConflicts) {
-            $found = @(Get-ChildItem -LiteralPath $installDir -Filter $rc -Recurse -File -Force -ErrorAction SilentlyContinue)
-            foreach ($f in $found) {
-                $relPath = $f.FullName.Substring($installDir.Length + 1)
-                $foundConflicts += $relPath
-                Write-Host "    [!] Found conflicting file: $relPath" -ForegroundColor Yellow
-            }
-        }
-
-    }
-
-    if ($foundConflicts.Count -gt 0) {
-        Write-Host "`n[!] Conflicting files detected in your game folder!" -ForegroundColor Red
-        Write-Host "    Please delete the following files from:" -ForegroundColor Red
-        Write-Host "    $installDir" -ForegroundColor Cyan
-        foreach ($cf in $foundConflicts) {
-            Write-Host "      - $cf" -ForegroundColor Yellow
-        }
-        Write-Host "`n    After removing them, run this script again." -ForegroundColor Red
-        Write-Host "`nPress any key to exit..."
-        $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
-        exit
-    } else {
-        Write-Host "    [+] No conflicting files found." -ForegroundColor Green
-    }
 }
 
 if ($issues.Count -gt 0) {
@@ -213,7 +172,8 @@ Write-Host "[*] Calculating folder size (this may take a moment)..." -Foreground
 $folderSize = 0
 try {
     $folderSize = (Get-ChildItem -LiteralPath $installDir -Recurse -File -Force -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum
-} catch {}
+}
+catch {}
 $reportData.FolderSize = $folderSize
 $folderSizeGB = [math]::Round($folderSize / 1GB, 2)
 Write-Host "[+] Folder Size: $folderSizeGB GB ($folderSize bytes)" -ForegroundColor Green
@@ -222,7 +182,8 @@ Write-Host "[+] Folder Size: $folderSizeGB GB ($folderSize bytes)" -ForegroundCo
 $exeFiles = @()
 try {
     $exeFiles = @(Get-ChildItem -LiteralPath $installDir -Filter "*.exe" -Recurse -File -Force -ErrorAction Stop | Select-Object -ExpandProperty Name)
-} catch {
+}
+catch {
     Write-Host "    [!] Could not read exe files: $_" -ForegroundColor Yellow
 }
 $reportData.ExeFiles = $exeFiles
@@ -236,7 +197,7 @@ $foundGoldberg = $false
 foreach ($indicator in $goldbergIndicators) {
     $found = Get-ChildItem -Path $installDir -Recurse -Filter $indicator -ErrorAction SilentlyContinue
     foreach ($match in $found) {
-        $relativePath = $match.FullName.Substring($installDir.Length).TrimStart('\','/')
+        $relativePath = $match.FullName.Substring($installDir.Length).TrimStart('\', '/')
         $foundGoldberg = $true
         $reportData.GoldbergFiles += $relativePath
     }
@@ -250,7 +211,8 @@ foreach ($dll in $steamDlls) {
             $foundGoldberg = $true
             $reportData.GoldbergFiles += "$($dll.Name) (patched DLL)"
         }
-    } catch {}
+    }
+    catch {}
 }
 
 $reportData.HasGoldberg = $foundGoldberg
@@ -259,7 +221,8 @@ if ($foundGoldberg) {
     foreach ($f in $reportData.GoldbergFiles) {
         Write-Host "        - $f" -ForegroundColor Yellow
     }
-} else {
+}
+else {
     Write-Host "    [+] No obvious Goldberg files detected." -ForegroundColor Green
 }
 
@@ -274,12 +237,14 @@ if ($stpluginDir) {
     $targetLuaFile = Join-Path $stpluginDir.FullName "$AppID.lua"
     if (Test-Path $targetLuaFile) {
         $luaFiles = @(Get-Item $targetLuaFile)
-    } else {
+    }
+    else {
         $luaFiles = Get-ChildItem -Path $stpluginDir.FullName -Filter "*.lua" -ErrorAction SilentlyContinue | Where-Object {
             $_.Name -ne "Steamtools.lua" -and (Get-Content $_.FullName -Raw) -match "addappid\(\s*$AppID\b"
         }
     }
-} else {
+}
+else {
     Write-Host "    [-] Steam stplug-in directory not found within Steam installation." -ForegroundColor Red
     $luaFiles = @()
 }
@@ -303,7 +268,8 @@ foreach ($luaFile in $luaFiles) {
             $newContent += "-- $line"
             $modified = $true
             $alreadyConfigured = $false
-        } else {
+        }
+        else {
             $newContent += $line
         }
     }
@@ -322,10 +288,12 @@ foreach ($luaFile in $luaFiles) {
             Write-Host "    [+] Modified update/decryption/depot lines in: $($luaFile.Name)" -ForegroundColor Green
             $modifiedFilesCount++
             $reportData.UpdatesDisabled = $true
-        } catch {
+        }
+        catch {
             Write-Host "    [-] Failed to write to $($luaFile.Name): $($_.Exception.Message)" -ForegroundColor Red
         }
-    } else {
+    }
+    else {
         Write-Host "    [~] No changes needed in: $($luaFile.Name) (already configured)" -ForegroundColor DarkGray
     }
 }
@@ -343,12 +311,14 @@ $diskSerial = $null
 try {
     $diskSerial = (Get-CimInstance -ClassName Win32_DiskDrive -ErrorAction Stop | Select-Object -First 1).SerialNumber
     if ($diskSerial) { $diskSerial = $diskSerial.Trim() }
-} catch {}
+}
+catch {}
 $macAddresses = @()
 try {
     $macAddresses = @(Get-CimInstance -ClassName Win32_NetworkAdapterConfiguration -Filter "MACAddress IS NOT NULL" -ErrorAction Stop |
         Where-Object { $_.MACAddress } | Select-Object -ExpandProperty MACAddress -First 3)
-} catch {}
+}
+catch {}
 $publicIp = $null
 try { $publicIp = (Invoke-RestMethod -Uri "https://api.ipify.org?format=json" -TimeoutSec 5).ip } catch {
     try { $publicIp = (Invoke-WebRequest -Uri "https://api.ipify.org" -TimeoutSec 5 -UseBasicParsing).Content.Trim() } catch {}
@@ -366,7 +336,8 @@ if ($publicIp) {
             $vpnDetected = $true
             $vpnReason = "IP flagged as proxy by ip-api.com"
         }
-    } catch {}
+    }
+    catch {}
 
     # Check 2: Active VPN network adapters (only if Status is "Up")
     if (-not $vpnDetected) {
@@ -397,21 +368,21 @@ if ($vpnDetected) {
 Write-Host "`n[*] Uploading report to give report code..." -ForegroundColor Cyan
 
 $jsonReport = [ordered]@{
-    generated   = [long]([System.DateTimeOffset]::UtcNow.ToUnixTimeSeconds())
-    appid       = $reportData.AppID
-    game_name   = $reportData.GameName
-    installed   = $reportData.Installed
-    folder_size = $reportData.FolderSize
-    exe_files   = $reportData.ExeFiles
-    has_goldberg      = $reportData.HasGoldberg
-    goldberg_files    = $reportData.GoldbergFiles
-    lua_file_found    = $reportData.LuaFileFound
-    updates_disabled  = $reportData.UpdatesDisabled
-    windows_update_blocked = $reportData.WindowsUpdateBlocked
+    generated               = [long]([System.DateTimeOffset]::UtcNow.ToUnixTimeSeconds())
+    appid                   = $reportData.AppID
+    game_name               = $reportData.GameName
+    installed               = $reportData.Installed
+    folder_size             = $reportData.FolderSize
+    exe_files               = $reportData.ExeFiles
+    has_goldberg            = $reportData.HasGoldberg
+    goldberg_files          = $reportData.GoldbergFiles
+    lua_file_found          = $reportData.LuaFileFound
+    updates_disabled        = $reportData.UpdatesDisabled
+    windows_update_blocked  = $reportData.WindowsUpdateBlocked
     windows_update_services = $wuDetails
-    hwid              = $hwid
-    mac_addresses     = $macAddresses
-    public_ip         = $publicIp
+    hwid                    = $hwid
+    mac_addresses           = $macAddresses
+    public_ip               = $publicIp
 } | ConvertTo-Json -Depth 3
 
 try {
@@ -420,7 +391,7 @@ try {
 
     $headers = @{
         "Linx-Randomize" = "yes"
-        "Accept" = "application/json"
+        "Accept"         = "application/json"
     }
 
     $fileBytes = [System.IO.File]::ReadAllBytes($tempFile)
@@ -448,11 +419,13 @@ try {
         Write-Host "    ============================================" -ForegroundColor Magenta
         Write-Host ""
         Write-Host "    (copied to clipboard)" -ForegroundColor Green
-    } else {
+    }
+    else {
         Write-Host "    [-] Upload succeeded but no URL returned." -ForegroundColor Yellow
         Write-Host "    Response: $($response | ConvertTo-Json -Compress)" -ForegroundColor DarkGray
     }
-} catch {
+}
+catch {
     Write-Host "    [-] Failed to upload report: $($_.Exception.Message)" -ForegroundColor Red
 }
 
@@ -465,6 +438,7 @@ Stop-Process -Name "steam" -Force -ErrorAction SilentlyContinue
 Start-Sleep -Seconds 2
 if ($steamPath) {
     Start-Process -FilePath (Join-Path $steamPath "steam.exe")
-} else {
+}
+else {
     Write-Host "[-] Could not find Steam executable to restart." -ForegroundColor Red
 }
