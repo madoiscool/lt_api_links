@@ -26,7 +26,7 @@ param(
 
 # ============== GLOBAL CONFIG ==============
 # Options: "github" | "github+morrenus" | "github+manifesthub"
-$Global:Mode = "github"
+$Global:Mode = "github+morrenus"
 # ===========================================
 
 # Set console encoding to UTF8
