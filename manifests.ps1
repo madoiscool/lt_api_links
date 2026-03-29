@@ -93,6 +93,13 @@ function Write-WarningMsg {
     Write-Host "  [!] $Message" -ForegroundColor Yellow
 }
 
+function Exit-WithPrompt {
+    Write-Host ""
+    Write-Host "  Press any key to exit..." -ForegroundColor DarkGray
+    $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+    exit 1
+}
+
 function Get-SteamPath {
     $registryPaths = @(
         "HKLM:\SOFTWARE\WOW6432Node\Valve\Steam",
@@ -294,13 +301,13 @@ if ($resolvedMode -eq "github") {
     }
     if ([string]::IsNullOrWhiteSpace($activeApiKey)) {
         Write-ErrorMsg "Morrenus API Key is required!"
-        exit 1
+        Exit-WithPrompt
     }
     # Validate key format: smm_ prefix + 96 hex chars = 100 total
     if ($activeApiKey -notmatch '^smm_[0-9a-f]{96}$') {
         Write-ErrorMsg "Invalid Morrenus API key format!"
         Write-Host "  Expected: smm_ followed by 96 hex characters (total 100 chars)" -ForegroundColor DarkGray
-        exit 1
+        Exit-WithPrompt
     }
     # Validate key against Morrenus API
     Write-Host ""
@@ -309,7 +316,7 @@ if ($resolvedMode -eq "github") {
         $statsResponse = Invoke-RestMethod -Uri "https://manifest.morrenus.xyz/api/v1/user/stats?api_key=$activeApiKey" -Method Get -TimeoutSec 15 -ErrorAction Stop
         if (-not $statsResponse.can_make_requests) {
             Write-ErrorMsg "Your Morrenus key has hit its daily limit ($($statsResponse.daily_usage)/$($statsResponse.daily_limit)). Try again tomorrow."
-            exit 1
+            Exit-WithPrompt
         }
         Write-Success "Welcome back $($statsResponse.username)! Fetching depots now!"
     } catch {
@@ -326,7 +333,7 @@ if ($resolvedMode -eq "github") {
                 Write-ErrorMsg "Failed to validate Morrenus API key: $($_.Exception.Message)"
             }
         }
-        exit 1
+        Exit-WithPrompt
     }
 } elseif ($resolvedMode -eq "github+manifesthub") {
     Write-Host "  [MODE] GitHub + ManifestHub - ManifestHub API as fallback" -ForegroundColor Cyan
@@ -340,7 +347,7 @@ if ($resolvedMode -eq "github") {
     }
     if ([string]::IsNullOrWhiteSpace($activeApiKey)) {
         Write-ErrorMsg "ManifestHub API Key is required!"
-        exit 1
+        Exit-WithPrompt
     }
 }
 
