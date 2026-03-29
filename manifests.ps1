@@ -7,7 +7,10 @@
     Parses local Lua files and fetches manifests from ManifestHub API.
 
 .PARAMETER ApiKey
-    Your ManifestHub API key from https://manifesthub1.filegear-sg.me/
+    Your ManifestHub API key (required for github+manifesthub mode)
+
+.PARAMETER MorrenusApiKey
+    Your Morrenus API key (required for github+morrenus mode)
 
 .PARAMETER AppId
     The Steam App ID to download manifests for
@@ -15,15 +18,15 @@
 
 param(
     [string]$ApiKey,
+    [string]$MorrenusApiKey,
     [string]$AppId,
     [switch]$BackupMode,
-    [switch]$UseMainAPI  # Use this flag to use ManifestHub API instead of backup
+    [switch]$UseMainAPI  # Use this flag to force github+manifesthub mode
 )
 
 # ============== GLOBAL CONFIG ==============
-# Set to $true to always use backup mode (no API key needed)
-# Set to $false to use ManifestHub API by default
-$Global:AlwaysUseBackupMode = $true
+# Options: "github" | "github+morrenus" | "github+manifesthub"
+$Global:Mode = "github"
 # ===========================================
 
 # Set console encoding to UTF8
@@ -156,63 +159,97 @@ function Get-ManifestIdForDepot {
     return $null
 }
 
-function Download-Manifest {
+function Try-DownloadUrl {
     param(
-        [string]$ApiKey,
-        [string]$DepotId,
-        [string]$ManifestId,
-        [string]$OutputPath,
-        [bool]$UseBackupMode = $false,
-        [int]$MaxRetries = 5,
+        [string]$Url,
+        [string]$OutputFile,
+        [int]$MaxRetries,
+        [string]$Label,
         [int]$RetryDelaySeconds = 3
     )
-
-    # Use backup URL or main API based on mode
-    if ($UseBackupMode) {
-        $url = "https://raw.githubusercontent.com/qwe213312/k25FCdfEOoEJ42S6/main/${DepotId}_${ManifestId}.manifest"
-        $MaxRetries = 2
-    } else {
-        $url = "https://api.manifesthub1.filegear-sg.me/manifest?apikey=$ApiKey&depotid=$DepotId&manifestid=$ManifestId"
-    }
-    $outputFile = Join-Path $OutputPath "${DepotId}_${ManifestId}.manifest"
 
     $lastError = $null
 
     for ($attempt = 1; $attempt -le $MaxRetries; $attempt++) {
         try {
-            # Remove partial file if exists from previous attempt
-            if (Test-Path $outputFile) {
-                Remove-Item $outputFile -Force -ErrorAction SilentlyContinue
+            if (Test-Path $OutputFile) {
+                Remove-Item $OutputFile -Force -ErrorAction SilentlyContinue
             }
 
-            $response = Invoke-WebRequest -Uri $url -Method Get -TimeoutSec 120 -OutFile $outputFile -PassThru
+            Invoke-WebRequest -Uri $Url -Method Get -TimeoutSec 120 -OutFile $OutputFile -ErrorAction Stop
 
-            if (Test-Path $outputFile) {
-                $fileSize = (Get-Item $outputFile).Length
+            if (Test-Path $OutputFile) {
+                $fileSize = (Get-Item $OutputFile).Length
                 if ($fileSize -gt 0) {
-                    return @{
-                        Success = $true
-                        FilePath = $outputFile
-                        Size = $fileSize
-                        Attempts = $attempt
-                    }
+                    return @{ Success = $true; Is404 = $false; Size = $fileSize; Attempts = $attempt }
                 }
             }
 
             $lastError = "Empty file received"
         } catch {
+            $statusCode = $null
+            if ($_.Exception.Response) {
+                $statusCode = [int]$_.Exception.Response.StatusCode
+            }
+            if ($statusCode -eq 404) {
+                if (Test-Path $OutputFile) { Remove-Item $OutputFile -Force -ErrorAction SilentlyContinue }
+                return @{ Success = $false; Is404 = $true; Error = "Not found (404)"; Attempts = $attempt }
+            }
             $lastError = $_.Exception.Message
         }
 
-        # If not the last attempt, wait and show retry message
         if ($attempt -lt $MaxRetries) {
-            Write-Host "      Attempt $attempt failed: $lastError" -ForegroundColor DarkYellow
+            Write-Host "      Attempt $attempt failed ($Label): $lastError" -ForegroundColor DarkYellow
             Write-Host "      Retrying in ${RetryDelaySeconds}s..." -ForegroundColor DarkGray
             Start-Sleep -Seconds $RetryDelaySeconds
         }
     }
 
-    return @{ Success = $false; Error = $lastError; Attempts = $MaxRetries }
+    return @{ Success = $false; Is404 = $false; Error = $lastError; Attempts = $MaxRetries }
+}
+
+function Download-Manifest {
+    param(
+        [string]$DepotId,
+        [string]$ManifestId,
+        [string]$OutputPath,
+        [string]$Mode,
+        [string]$ApiKey,
+        [int]$RetryDelaySeconds = 3
+    )
+
+    $outputFile = Join-Path $OutputPath "${DepotId}_${ManifestId}.manifest"
+    $githubUrl = "https://raw.githubusercontent.com/qwe213312/k25FCdfEOoEJ42S6/main/${DepotId}_${ManifestId}.manifest"
+
+    # Always try GitHub first
+    $githubResult = Try-DownloadUrl -Url $githubUrl -OutputFile $outputFile -MaxRetries 2 -Label "GitHub" -RetryDelaySeconds $RetryDelaySeconds
+
+    if ($githubResult.Success) {
+        return @{ Success = $true; FilePath = $outputFile; Size = $githubResult.Size; Attempts = $githubResult.Attempts }
+    }
+
+    # On GitHub 404 and mode has a secondary API, try it
+    if ($githubResult.Is404 -and $Mode -ne "github") {
+        if ($Mode -eq "github+morrenus") {
+            Write-Host "      Not on GitHub, trying Morrenus..." -ForegroundColor DarkGray
+            $secondaryUrl = "https://manifest.morrenus.xyz/api/v1/generate/manifest?depot_id=${DepotId}&manifest_id=${ManifestId}&api_key=${ApiKey}"
+            $secondaryLabel = "Morrenus"
+        } else {
+            Write-Host "      Not on GitHub, trying ManifestHub..." -ForegroundColor DarkGray
+            $secondaryUrl = "https://api.manifesthub1.filegear-sg.me/manifest?apikey=${ApiKey}&depotid=${DepotId}&manifestid=${ManifestId}"
+            $secondaryLabel = "ManifestHub"
+        }
+
+        $secondaryResult = Try-DownloadUrl -Url $secondaryUrl -OutputFile $outputFile -MaxRetries 5 -Label $secondaryLabel -RetryDelaySeconds $RetryDelaySeconds
+
+        if ($secondaryResult.Success) {
+            return @{ Success = $true; FilePath = $outputFile; Size = $secondaryResult.Size; Attempts = $secondaryResult.Attempts }
+        }
+
+        return @{ Success = $false; Error = $secondaryResult.Error; Attempts = $secondaryResult.Attempts }
+    }
+
+    return @{ Success = $false; Error = $githubResult.Error; Attempts = $githubResult.Attempts }
 }
 
 function Format-FileSize {
@@ -233,33 +270,76 @@ function Format-FileSize {
 
 Write-Header
 
-# Determine mode: Global config -> param -> env var
+# Determine mode: param flags -> global config -> env var
+$resolvedMode = $Global:Mode
 if ($UseMainAPI) {
-    $BackupMode = $false
-} elseif (-not $BackupMode) {
-    if ($Global:AlwaysUseBackupMode) {
-        $BackupMode = $true
-    } elseif ($env:MH_BACKUP_MODE -eq "1" -or $env:MH_BACKUP_MODE -eq "true") {
-        $BackupMode = $true
-    }
+    $resolvedMode = "github+manifesthub"
+} elseif ($BackupMode) {
+    $resolvedMode = "github"
+} elseif ($env:MH_BACKUP_MODE -eq "1" -or $env:MH_BACKUP_MODE -eq "true") {
+    $resolvedMode = "github"
 }
 
-if ($BackupMode) {
-    Write-Host "  [BACKUP MODE] Using GitHub mirror - No API key required" -ForegroundColor Yellow
-} else {
-    # Get API Key (check param -> env var -> prompt)
-    if (-not $ApiKey) {
-        $ApiKey = $env:MH_API_KEY
+$activeApiKey = $null
+
+if ($resolvedMode -eq "github") {
+    Write-Host "  [MODE] GitHub Only - No API key required" -ForegroundColor Yellow
+} elseif ($resolvedMode -eq "github+morrenus") {
+    Write-Host "  [MODE] GitHub + Morrenus - Morrenus API as fallback" -ForegroundColor Cyan
+    $activeApiKey = $MorrenusApiKey
+    if (-not $activeApiKey) { $activeApiKey = $env:MORRENUS_API_KEY }
+    if (-not $activeApiKey) {
+        Write-Host ""
+        $activeApiKey = Read-Host "  Enter Morrenus API Key"
     }
-    if (-not $ApiKey) {
+    if ([string]::IsNullOrWhiteSpace($activeApiKey)) {
+        Write-ErrorMsg "Morrenus API Key is required!"
+        exit 1
+    }
+    # Validate key format: smm_ prefix + 96 hex chars = 100 total
+    if ($activeApiKey -notmatch '^smm_[0-9a-f]{96}$') {
+        Write-ErrorMsg "Invalid Morrenus API key format!"
+        Write-Host "  Expected: smm_ followed by 96 hex characters (total 100 chars)" -ForegroundColor DarkGray
+        exit 1
+    }
+    # Validate key against Morrenus API
+    Write-Host ""
+    Write-Status "Validating Morrenus API key..."
+    try {
+        $statsResponse = Invoke-RestMethod -Uri "https://manifest.morrenus.xyz/api/v1/user/stats?api_key=$activeApiKey" -Method Get -TimeoutSec 15 -ErrorAction Stop
+        if (-not $statsResponse.can_make_requests) {
+            Write-ErrorMsg "Your Morrenus key has hit its daily limit ($($statsResponse.daily_usage)/$($statsResponse.daily_limit)). Try again tomorrow."
+            exit 1
+        }
+        Write-Success "Welcome back $($statsResponse.username)! Fetching depots now!"
+    } catch {
+        $statusCode = $null
+        if ($_.Exception.Response) { $statusCode = [int]$_.Exception.Response.StatusCode }
+        if ($statusCode -eq 401 -or $statusCode -eq 403 -or $statusCode -eq 404) {
+            Write-ErrorMsg "API key not found or expired."
+        } else {
+            # Try to parse the body for the detail message
+            try {
+                $errBody = $_.ErrorDetails.Message | ConvertFrom-Json
+                Write-ErrorMsg $errBody.detail
+            } catch {
+                Write-ErrorMsg "Failed to validate Morrenus API key: $($_.Exception.Message)"
+            }
+        }
+        exit 1
+    }
+} elseif ($resolvedMode -eq "github+manifesthub") {
+    Write-Host "  [MODE] GitHub + ManifestHub - ManifestHub API as fallback" -ForegroundColor Cyan
+    $activeApiKey = $ApiKey
+    if (-not $activeApiKey) { $activeApiKey = $env:MH_API_KEY }
+    if (-not $activeApiKey) {
         Write-Host "  Get your API key from: " -NoNewline
         Write-Host "https://manifesthub1.filegear-sg.me/" -ForegroundColor Yellow
         Write-Host ""
-        $ApiKey = Read-Host "  Enter ManifestHub API Key"
+        $activeApiKey = Read-Host "  Enter ManifestHub API Key"
     }
-
-    if ([string]::IsNullOrWhiteSpace($ApiKey)) {
-        Write-ErrorMsg "API Key is required!"
+    if ([string]::IsNullOrWhiteSpace($activeApiKey)) {
+        Write-ErrorMsg "ManifestHub API Key is required!"
         exit 1
     }
 }
@@ -423,7 +503,7 @@ for ($i = 0; $i -lt $downloadQueue.Count; $i++) {
     Write-Host "  +---------------------------------------------------------------+" -ForegroundColor DarkGray
 
     # Download the manifest
-    $result = Download-Manifest -ApiKey $ApiKey -DepotId $depotId -ManifestId $manifestId -OutputPath $depotCachePath -UseBackupMode $BackupMode
+    $result = Download-Manifest -DepotId $depotId -ManifestId $manifestId -OutputPath $depotCachePath -Mode $resolvedMode -ApiKey $activeApiKey
 
     if ($result.Success) {
         $successCount++
