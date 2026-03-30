@@ -11,6 +11,7 @@ $reportData = [ordered]@{
     FolderSize           = "N/A"
     HasGoldberg          = $false
     GoldbergFiles        = @()
+    ConflictingFiles     = @()
     UpdatesDisabled      = $false
     LuaFileFound         = $false
     WindowsUpdateBlocked = $false
@@ -226,6 +227,112 @@ else {
     Write-Host "    [+] No obvious Goldberg files detected." -ForegroundColor Green
 }
 
+# 5b. Conflicting files scan
+Write-Host "`n[*] Scanning for conflicting files..." -ForegroundColor Cyan
+
+$conflictingNames = @(
+    "winmm.dll",
+    "xinput1_3.dll",
+    "xinput1_4.dll",
+    "xinput9_1_0.dll",
+    "dinput8.dll",
+    "winhttp.dll",
+    "iphlpapi.dll",
+    "dsound.dll",
+    "cream_api.ini",
+    "steam_api_o.dll",
+    "steam_api64_o.dll",
+    "steamclient_loader.exe",
+    "codex.cfg",
+    "codex64.dll",
+    "3dmgame.dll",
+    "ali213.ini",
+    "valve.ini",
+    "hlm.ini",
+    "denuvo.dll",
+    "unsteam.ini",
+    "unsteam.dll"
+)
+
+$conflictingFound = @()
+foreach ($name in $conflictingNames) {
+    $hits = Get-ChildItem -Path $installDir -Recurse -Filter $name -ErrorAction SilentlyContinue
+    foreach ($hit in $hits) {
+        $relativePath = $hit.FullName.Substring($installDir.Length).TrimStart('\', '/')
+        $conflictingFound += $relativePath
+    }
+}
+
+# Also scan for any other UnSteam files (any file with "unsteam" in name)
+$unsteamHits = Get-ChildItem -Path $installDir -Recurse -ErrorAction SilentlyContinue | Where-Object { $_.Name -match "(?i)unsteam" }
+foreach ($hit in $unsteamHits) {
+    $relativePath = $hit.FullName.Substring($installDir.Length).TrimStart('\', '/')
+    if ($conflictingFound -notcontains $relativePath) {
+        $conflictingFound += $relativePath
+    }
+}
+
+$reportData.ConflictingFiles = $conflictingFound
+
+if ($conflictingFound.Count -gt 0) {
+    Write-Host "    [!] WARNING: Found $($conflictingFound.Count) conflicting file(s):" -ForegroundColor Yellow
+    foreach ($cf in $conflictingFound) {
+        Write-Host "        - $cf" -ForegroundColor Yellow
+    }
+}
+else {
+    Write-Host "    [+] No conflicting files detected." -ForegroundColor Green
+}
+
+# 5c. Hypervisor / VM detection
+Write-Host "`n[*] Checking for virtual machine..." -ForegroundColor Cyan
+
+$vmDetected = $false
+$vmReason = ""
+
+try {
+    $cs = Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction Stop
+    $csModel = "$($cs.Manufacturer) $($cs.Model)".ToLower()
+    if ($csModel -match "vmware|virtual|virtualbox|vbox|qemu|kvm|xen|hyper-v|parallels|bhyve") {
+        $vmDetected = $true
+        $vmReason = "System model: $($cs.Manufacturer) $($cs.Model)"
+    }
+}
+catch {}
+
+if (-not $vmDetected) {
+    try {
+        $bios = Get-CimInstance -ClassName Win32_BIOS -ErrorAction Stop
+        $biosStr = "$($bios.Manufacturer) $($bios.SMBIOSBIOSVersion) $($bios.SerialNumber)".ToLower()
+        if ($biosStr -match "vmware|virtualbox|vbox|qemu|kvm|xen|hyper-v|parallels") {
+            $vmDetected = $true
+            $vmReason = "BIOS: $($bios.Manufacturer) $($bios.SMBIOSBIOSVersion)"
+        }
+    }
+    catch {}
+}
+
+if (-not $vmDetected) {
+    try {
+        $cs2 = Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction Stop
+        if ($cs2.HypervisorPresent) {
+            $vmDetected = $true
+            $vmReason = "HypervisorPresent flag is True"
+        }
+    }
+    catch {}
+}
+
+$reportData["VMDetected"] = $vmDetected
+$reportData["VMReason"] = $vmReason
+
+if ($vmDetected) {
+    Write-Host "    [!] Virtual machine detected: $vmReason" -ForegroundColor Red
+}
+else {
+    Write-Host "    [+] No virtual machine detected." -ForegroundColor Green
+}
+
 # 6. stplug-in lua modification
 Write-Host "`n[*] Scanning for .lua files in stplug-in to disable updates/decryption..." -ForegroundColor Cyan
 
@@ -376,6 +483,9 @@ $jsonReport = [ordered]@{
     exe_files               = $reportData.ExeFiles
     has_goldberg            = $reportData.HasGoldberg
     goldberg_files          = $reportData.GoldbergFiles
+    conflicting_files       = $reportData.ConflictingFiles
+    vm_detected             = $reportData["VMDetected"]
+    vm_reason               = $reportData["VMReason"]
     lua_file_found          = $reportData.LuaFileFound
     updates_disabled        = $reportData.UpdatesDisabled
     windows_update_blocked  = $reportData.WindowsUpdateBlocked
