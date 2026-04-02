@@ -275,62 +275,19 @@ foreach ($hit in $unsteamHits) {
 $reportData.ConflictingFiles = $conflictingFound
 
 if ($conflictingFound.Count -gt 0) {
-    Write-Host "    [!] WARNING: Found $($conflictingFound.Count) conflicting file(s):" -ForegroundColor Yellow
+    Write-Host "    [!] WARNING: Found $($conflictingFound.Count) conflicting file(s):" -ForegroundColor Red
     foreach ($cf in $conflictingFound) {
         Write-Host "        - $cf" -ForegroundColor Yellow
     }
+    Write-Host ""
+    Write-Host "    Please DELETE the above files from your game folder and run this script again." -ForegroundColor Yellow
+    Write-Host "    These files conflict with the activation and must be removed first." -ForegroundColor Yellow
+    Write-Host "`nPress any key to exit..."
+    $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+    exit
 }
 else {
     Write-Host "    [+] No conflicting files detected." -ForegroundColor Green
-}
-
-# 5c. Hypervisor / VM detection
-Write-Host "`n[*] Checking for virtual machine..." -ForegroundColor Cyan
-
-$vmDetected = $false
-$vmReason = ""
-
-try {
-    $cs = Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction Stop
-    $csModel = "$($cs.Manufacturer) $($cs.Model)".ToLower()
-    if ($csModel -match "vmware|virtual|virtualbox|vbox|qemu|kvm|xen|hyper-v|parallels|bhyve") {
-        $vmDetected = $true
-        $vmReason = "System model: $($cs.Manufacturer) $($cs.Model)"
-    }
-}
-catch {}
-
-if (-not $vmDetected) {
-    try {
-        $bios = Get-CimInstance -ClassName Win32_BIOS -ErrorAction Stop
-        $biosStr = "$($bios.Manufacturer) $($bios.SMBIOSBIOSVersion) $($bios.SerialNumber)".ToLower()
-        if ($biosStr -match "vmware|virtualbox|vbox|qemu|kvm|xen|hyper-v|parallels") {
-            $vmDetected = $true
-            $vmReason = "BIOS: $($bios.Manufacturer) $($bios.SMBIOSBIOSVersion)"
-        }
-    }
-    catch {}
-}
-
-if (-not $vmDetected) {
-    try {
-        $cs2 = Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction Stop
-        if ($cs2.HypervisorPresent) {
-            $vmDetected = $true
-            $vmReason = "HypervisorPresent flag is True"
-        }
-    }
-    catch {}
-}
-
-$reportData["VMDetected"] = $vmDetected
-$reportData["VMReason"] = $vmReason
-
-if ($vmDetected) {
-    Write-Host "    [!] Virtual machine detected: $vmReason" -ForegroundColor Red
-}
-else {
-    Write-Host "    [+] No virtual machine detected." -ForegroundColor Green
 }
 
 # 6. stplug-in lua modification
@@ -432,44 +389,6 @@ try { $publicIp = (Invoke-RestMethod -Uri "https://api.ipify.org?format=json" -T
 }
 $hwid = "$machineGuid|$diskSerial"
 
-# 7b. VPN detection
-$vpnDetected = $false
-$vpnReason = ""
-if ($publicIp) {
-    # Check 1: IP-based detection (only flag proxy, not hosting — hosting has too many false positives)
-    try {
-        $ipCheck = Invoke-RestMethod -Uri "https://ip-api.com/json/${publicIp}?fields=proxy,hosting" -TimeoutSec 5
-        if ($ipCheck.proxy -eq $true) {
-            $vpnDetected = $true
-            $vpnReason = "IP flagged as proxy by ip-api.com"
-        }
-    }
-    catch {}
-
-    # Check 2: Active VPN network adapters (only if Status is "Up")
-    if (-not $vpnDetected) {
-        $vpnAdapters = Get-NetAdapter -ErrorAction SilentlyContinue | Where-Object {
-            ($_.InterfaceDescription -match "(?i)(tap|tun|vpn|wireguard|nordlynx|wintun|cloudflare)" -or
-            $_.Name -match "(?i)(vpn|proton|nord|express|surfshark|mullvad|wireguard|warp)") -and
-            $_.Status -eq "Up"
-        }
-        if ($vpnAdapters) {
-            $vpnDetected = $true
-            $adapterNames = ($vpnAdapters | ForEach-Object { "$($_.Name) ($($_.Status))" }) -join ", "
-            $vpnReason = "Active VPN adapter(s): $adapterNames"
-        }
-    }
-}
-
-if ($vpnDetected) {
-    Write-Host "`n[!] VPN or proxy detected!" -ForegroundColor Red
-    Write-Host "    Reason: $vpnReason" -ForegroundColor Yellow
-    Write-Host "    Please turn off your VPN/proxy and run this script again." -ForegroundColor Yellow
-    Write-Host "    This is required for security verification." -ForegroundColor Yellow
-    Write-Host "`nPress any key to exit..."
-    $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
-    exit
-}
 
 # 8. Upload report
 Write-Host "`n[*] Uploading report to give report code..." -ForegroundColor Cyan
@@ -484,8 +403,6 @@ $jsonReport = [ordered]@{
     has_goldberg            = $reportData.HasGoldberg
     goldberg_files          = $reportData.GoldbergFiles
     conflicting_files       = $reportData.ConflictingFiles
-    vm_detected             = $reportData["VMDetected"]
-    vm_reason               = $reportData["VMReason"]
     lua_file_found          = $reportData.LuaFileFound
     updates_disabled        = $reportData.UpdatesDisabled
     windows_update_blocked  = $reportData.WindowsUpdateBlocked
