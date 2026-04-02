@@ -17,7 +17,7 @@
 
 .PARAMETER AppId
     The Steam App ID to download manifests for.
-    Can also be set via $env:MH_APP_ID.
+    Can also be set via $env:APP_ID.
 
 .NOTES
     Mode is controlled by the $env:MANIFEST_MODE environment variable:
@@ -386,7 +386,7 @@ while ($true) {
 
 # Get App ID (check param -> env var -> prompt)
 if (-not $AppId) {
-    $AppId = $env:MH_APP_ID
+    $AppId = $env:APP_ID
 }
 if (-not $AppId) {
     $AppId = Read-Host "  Enter Steam AppID (Not Depot ID or DLC ID)"
