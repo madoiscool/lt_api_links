@@ -1,48 +1,61 @@
 <#
 .SYNOPSIS
-    Steam Manifest Downloader - Downloads depot manifests from ManifestHub
+    Steam Manifest Downloader - Downloads depot manifests for SteamTools
 
 .DESCRIPTION
     Downloads depot manifests when SteamTools servers are unavailable.
-    Parses local Lua files and fetches manifests from ManifestHub API.
+    Parses local Lua files and fetches manifests from GitHub mirror or a
+    fallback API (Morrenus or ManifestHub) depending on the mode.
 
 .PARAMETER ApiKey
-    Your ManifestHub API key (required for github+manifesthub mode)
+    Your ManifestHub API key (required for github+manifesthub mode).
+    Can also be set via $env:MH_API_KEY.
 
 .PARAMETER MorrenusApiKey
-    Your Morrenus API key (required for github+morrenus mode)
+    Your Morrenus API key (required for github+morrenus mode).
+    Can also be set via $env:MORRENUS_API_KEY.
 
 .PARAMETER AppId
-    The Steam App ID to download manifests for
+    The Steam App ID to download manifests for.
+    Can also be set via $env:MH_APP_ID.
+
+.NOTES
+    Mode is controlled by the $env:MANIFEST_MODE environment variable:
+      "github"             - GitHub mirror only, no API key needed (default)
+      "github+morrenus"    - GitHub first, Morrenus API as fallback
+      "github+manifesthub" - GitHub first, ManifestHub API as fallback
 #>
 
 param(
     [string]$ApiKey,
     [string]$MorrenusApiKey,
-    [string]$AppId,
-    [switch]$BackupMode,
-    [switch]$UseMainAPI  # Use this flag to force github+manifesthub mode
+    [string]$AppId
 )
-
-# ============== GLOBAL CONFIG ==============
-# Options: "github" | "github+morrenus" | "github+manifesthub"
-$Global:Mode = "github"
-# ===========================================
 
 # Set console encoding to UTF8
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $Host.UI.RawUI.WindowTitle = "Steam Manifest Downloader (For Steamtools)"
 
 function Write-Header {
+    param([string]$Mode = "github")
     Clear-Host
     Write-Host ""
     # Clickable hyperlinks using ANSI escape sequences (works in Windows Terminal)
     $esc = [char]27
-    $manifestHubLink = "$esc]8;;https://github.com/SteamAutoCracks/ManifestHub$esc\ManifestHub$esc]8;;$esc\"
+    if ($Mode -eq "github+morrenus") {
+        $sourceLink = "$esc]8;;https://manifest.morrenus.xyz/$esc\Morrenus$esc]8;;$esc\"
+        $sourcePad  = "          "
+    } elseif ($Mode -eq "github+manifesthub") {
+        $sourceLink = "$esc]8;;https://github.com/SteamAutoCracks/ManifestHub$esc\ManifestHub$esc]8;;$esc\"
+        $sourcePad  = "       "
+    } else {
+        $sourceLink = "$esc]8;;https://github.com/qwe213312/k25FCdfEOoEJ42S6$esc\GitHub Mirror$esc]8;;$esc\"
+        $sourcePad  = "    "
+    }
     $discordLink = "$esc]8;;https://discord.gg/luatools$esc\discord.gg/luatools$esc]8;;$esc\"
     Write-Host "  +================================================================+" -ForegroundColor Cyan
     Write-Host "  |        STEAM MANIFEST DOWNLOADER (For Steamtools)              |" -ForegroundColor Cyan
-    Write-Host "  |   Downloads Out-Of-Date Manifest Files From $manifestHubLink        |" -ForegroundColor Cyan
+    Write-Host "  |   Downloads Out-Of-Date Manifest Files From $sourceLink$sourcePad|" -ForegroundColor Cyan
     Write-Host "  |                                                                |" -ForegroundColor Cyan
     Write-Host "  |                   by $discordLink                       |" -ForegroundColor DarkCyan
     Write-Host "  +================================================================+" -ForegroundColor Cyan
@@ -275,17 +288,28 @@ function Format-FileSize {
 # MAIN SCRIPT
 # ===========================================================================
 
-Write-Header
-
-# Determine mode: param flags -> global config -> env var
-$resolvedMode = $Global:Mode
-if ($UseMainAPI) {
-    $resolvedMode = "github+manifesthub"
-} elseif ($BackupMode) {
-    $resolvedMode = "github"
-} elseif ($env:MH_BACKUP_MODE -eq "1" -or $env:MH_BACKUP_MODE -eq "true") {
-    $resolvedMode = "github"
+if ($env:MANIFEST_MODE) {
+    $resolvedMode = $env:MANIFEST_MODE
+} else {
+    Clear-Host
+    Write-Host ""
+    Write-Host "  Select download mode:" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "    1. Github Mirror    (No Key Required)" -ForegroundColor White
+    Write-Host "    2. Morrenus         (Free Key from https://manifest.morrenus.xyz/)" -ForegroundColor White
+    Write-Host "    3. ManifestHub      (Free Key from https://manifesthub1.filegear-sg.me/)" -ForegroundColor White
+    Write-Host ""
+    do {
+        $modeChoice = Read-Host "  Enter choice (1-3)"
+    } while ($modeChoice -notin @("1","2","3"))
+    $resolvedMode = switch ($modeChoice) {
+        "1" { "github" }
+        "2" { "github+morrenus" }
+        "3" { "github+manifesthub" }
+    }
 }
+
+Write-Header -Mode $resolvedMode
 
 $activeApiKey = $null
 
@@ -296,6 +320,11 @@ if ($resolvedMode -eq "github") {
     $activeApiKey = $MorrenusApiKey
     if (-not $activeApiKey) { $activeApiKey = $env:MORRENUS_API_KEY }
     if (-not $activeApiKey) {
+        Write-Host ""
+        Write-Host "  How to get your Morrenus API key:" -ForegroundColor DarkGray
+        Write-Host "    1. Login at https://manifest.morrenus.xyz/ with your Discord account" -ForegroundColor DarkGray
+        Write-Host "    2. Generate your key at https://manifest.morrenus.xyz/api-keys/user" -ForegroundColor DarkGray
+        Write-Host "    3. Or get it from LuaTools plugin settings if you set it there" -ForegroundColor DarkGray
         Write-Host ""
         $activeApiKey = Read-Host "  Enter Morrenus API Key"
     }
@@ -353,6 +382,8 @@ if ($resolvedMode -eq "github") {
 
 Write-Host ""
 
+while ($true) {
+
 # Get App ID (check param -> env var -> prompt)
 if (-not $AppId) {
     $AppId = $env:MH_APP_ID
@@ -363,7 +394,7 @@ if (-not $AppId) {
 
 if ([string]::IsNullOrWhiteSpace($AppId) -or $AppId -notmatch '^\d+$') {
     Write-ErrorMsg "Valid App ID is required!"
-    exit 1
+    Exit-WithPrompt
 }
 
 Write-Host ""
@@ -590,5 +621,21 @@ if ($failedDepots.Count -gt 0) {
 }
 
 Write-Host ""
-Write-Host "  Press any key to exit..." -ForegroundColor DarkGray
-$null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+Write-Host "  What would you like to do next?" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "    1. Process another AppID" -ForegroundColor White
+Write-Host "    2. Done! (close PowerShell)" -ForegroundColor White
+Write-Host ""
+do {
+    $nextChoice = Read-Host "  Enter choice (1-2)"
+} while ($nextChoice -notin @("1","2"))
+
+if ($nextChoice -eq "2") { break }
+
+$AppId = $null
+Write-Header -Mode $resolvedMode
+Write-Host ""
+
+} # end while ($true)
+
+exit 0
