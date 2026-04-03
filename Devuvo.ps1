@@ -1,7 +1,86 @@
-# Devuvo validation script - updated 2026-03-16
+﻿# Devuvo validation script - updated 2026-04-04
+param(
+    [string]$AppID,
+    [switch]$Restore
+)
+
 if ([string]::IsNullOrWhiteSpace($AppID)) {
     $AppID = Read-Host "Enter Steam AppID"
 }
+
+# ========================
+# RESTORE MODE
+# ========================
+if ($Restore) {
+    $backupRoot = Join-Path $env:USERPROFILE "Danny_Save_Backups"
+    $backupDir = Join-Path $backupRoot $AppID
+
+    if (-not (Test-Path $backupDir)) {
+        Write-Host "[-] No backup found for AppID $AppID" -ForegroundColor Red
+        Write-Host "Press any key to exit..."
+        $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+        exit
+    }
+
+    $manifestFile = Join-Path $backupDir "backup_manifest.json"
+    if (-not (Test-Path $manifestFile)) {
+        Write-Host "[-] Backup manifest not found. Backup may be corrupted." -ForegroundColor Red
+        Write-Host "Press any key to exit..."
+        $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+        exit
+    }
+
+    $manifest = Get-Content $manifestFile -Raw | ConvertFrom-Json
+
+    Write-Host "`n========================================" -ForegroundColor Magenta
+    Write-Host "   RESTORE SAVES - $($manifest.game_name)" -ForegroundColor Magenta
+    Write-Host "========================================`n" -ForegroundColor Magenta
+
+    $restoredCount = 0
+    foreach ($entry in $manifest.entries) {
+        $sourcePath = Join-Path $backupDir $entry.backup_folder
+        $destPath = $entry.original_path
+
+        if (-not (Test-Path $sourcePath)) {
+            Write-Host "    [!] Backup missing: $($entry.label)" -ForegroundColor Yellow
+            continue
+        }
+
+        Write-Host "    [*] Restoring: $($entry.label)" -ForegroundColor Cyan
+
+        if (-not (Test-Path $destPath)) {
+            New-Item -Path $destPath -ItemType Directory -Force | Out-Null
+        }
+
+        if ($entry.files_only) {
+            foreach ($fileName in $entry.files_only) {
+                $src = Join-Path $sourcePath $fileName
+                $dst = Join-Path $destPath $fileName
+                if (Test-Path $src) {
+                    Copy-Item -LiteralPath $src -Destination $dst -Force
+                }
+            }
+        }
+        else {
+            Copy-Item -Path "$sourcePath\*" -Destination $destPath -Recurse -Force
+        }
+
+        Write-Host "    [+] Restored to: $destPath" -ForegroundColor Green
+        $restoredCount++
+    }
+
+    Write-Host "`n============================================" -ForegroundColor Magenta
+    Write-Host "   Restored $restoredCount save location(s)!" -ForegroundColor Green
+    Write-Host "============================================" -ForegroundColor Magenta
+    Write-Host "`nYou can now launch the game." -ForegroundColor Cyan
+    Write-Host "Press any key to exit..."
+    $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+    exit
+}
+
+# ========================
+# VALIDATION MODE (default)
+# ========================
 
 # ---- Report data collection ----
 $reportData = [ordered]@{
@@ -12,8 +91,7 @@ $reportData = [ordered]@{
     HasGoldberg          = $false
     GoldbergFiles        = @()
     ConflictingFiles     = @()
-    UpdatesDisabled      = $false
-    LuaFileFound         = $false
+
     WindowsUpdateBlocked = $false
 }
 
@@ -178,7 +256,142 @@ if ($issues.Count -gt 0) {
     exit
 }
 
-Write-Host "`nAll checks passed. Generating report..." -ForegroundColor Green
+Write-Host "`nAll checks passed." -ForegroundColor Green
+
+# ---- Auto-backup saves before reactivation ----
+Write-Host "`n[*] Backing up game saves..." -ForegroundColor Cyan
+
+$backupRoot = Join-Path $env:USERPROFILE "Danny_Save_Backups"
+$backupDir = Join-Path $backupRoot $AppID
+$saveLocations = @()
+
+# Check game folder for save directories
+if ($installDir -and (Test-Path $installDir)) {
+    $saveFolderNames = @("save", "saves", "savegame", "savegames", "SaveGames", "SaveData", "savedata", "save_data", "userdata", "profiles")
+    foreach ($name in $saveFolderNames) {
+        $found = Get-ChildItem -Path $installDir -Directory -Filter $name -Recurse -Depth 3 -ErrorAction SilentlyContinue
+        foreach ($dir in $found) {
+            $relPath = $dir.FullName.Substring($installDir.Length).TrimStart('\', '/')
+            $saveLocations += @{ Path = $dir.FullName; Label = "Game folder: $relPath" }
+        }
+    }
+    # Save files in game root
+    $saveFiles = Get-ChildItem -Path $installDir -File -Depth 0 -ErrorAction SilentlyContinue | Where-Object {
+        $_.Extension -in @(".sav", ".save", ".dat", ".profile", ".slot")
+    }
+    if ($saveFiles.Count -gt 0) {
+        $saveLocations += @{ Path = $installDir; Label = "Game folder root (save files)"; FilesOnly = $saveFiles.Name }
+    }
+}
+
+# Goldberg Emu saves
+$goldbergSavePath = Join-Path $env:APPDATA "Goldberg SteamEmu Saves\$AppID"
+if (Test-Path $goldbergSavePath) {
+    $saveLocations += @{ Path = $goldbergSavePath; Label = "Goldberg SteamEmu Saves" }
+}
+# Custom Goldberg save path
+if ($installDir) {
+    $localSaveTxt = Join-Path $installDir "steam_settings\local_save.txt"
+    if (Test-Path $localSaveTxt) {
+        $customPath = (Get-Content $localSaveTxt -First 1).Trim()
+        if ($customPath -and (Test-Path $customPath)) {
+            $saveLocations += @{ Path = $customPath; Label = "Goldberg custom save path" }
+        }
+    }
+}
+
+# Common external save locations (match by game name)
+$firstWord = if ($gameName -ne "Unknown" -and $gameName) { ($gameName -split '\s+')[0] } else { $null }
+# Known publishers that use their own folder (e.g. AppData/Local/CAPCOM/<game>/)
+$knownPublishers = @("CAPCOM", "SEGA", "Bandai Namco", "Square Enix", "Ubisoft", "FromSoftware", "Bethesda", "EA", "Rockstar Games", "2K Games", "Konami", "Koei Tecmo")
+if ($firstWord) {
+    $externalDirs = @(
+        (Join-Path ([Environment]::GetFolderPath("MyDocuments")) "My Games"),
+        [Environment]::GetFolderPath("MyDocuments"),
+        $env:LOCALAPPDATA,
+        $env:APPDATA,
+        (Join-Path $env:USERPROFILE "AppData\LocalLow"),
+        (Join-Path $env:USERPROFILE "Saved Games")
+    )
+    foreach ($extDir in $externalDirs) {
+        if (-not $extDir -or -not (Test-Path $extDir)) { continue }
+        # Direct match by game name
+        $matchDirs = Get-ChildItem -Path $extDir -Directory -ErrorAction SilentlyContinue | Where-Object {
+            $_.Name -match [regex]::Escape($firstWord)
+        }
+        foreach ($dir in $matchDirs) {
+            if ($dir.Name -eq "Goldberg SteamEmu Saves") { continue }
+            $relLabel = $dir.FullName.Replace($env:USERPROFILE, "~")
+            $already = $saveLocations | Where-Object { $_.Path -eq $dir.FullName }
+            if (-not $already) {
+                $saveLocations += @{ Path = $dir.FullName; Label = $relLabel }
+            }
+        }
+        # Search inside known publisher folders (e.g. CAPCOM/<game>, SEGA/<game>)
+        foreach ($pub in $knownPublishers) {
+            $pubDir = Join-Path $extDir $pub
+            if (Test-Path $pubDir) {
+                $subDirs = Get-ChildItem -Path $pubDir -Directory -ErrorAction SilentlyContinue | Where-Object {
+                    $_.Name -match [regex]::Escape($firstWord)
+                }
+                foreach ($dir in $subDirs) {
+                    $relLabel = $dir.FullName.Replace($env:USERPROFILE, "~")
+                    $already = $saveLocations | Where-Object { $_.Path -eq $dir.FullName }
+                    if (-not $already) {
+                        $saveLocations += @{ Path = $dir.FullName; Label = $relLabel }
+                    }
+                }
+            }
+        }
+    }
+}
+
+if ($saveLocations.Count -gt 0) {
+    # Clean previous backup
+    if (Test-Path $backupDir) { Remove-Item -Path $backupDir -Recurse -Force }
+    New-Item -Path $backupDir -ItemType Directory -Force | Out-Null
+
+    $manifest = @{
+        app_id = $AppID
+        game_name = $gameName
+        backed_up_at = [long]([System.DateTimeOffset]::UtcNow.ToUnixTimeSeconds())
+        entries = @()
+    }
+
+    $backedUp = 0
+    foreach ($loc in $saveLocations) {
+        $safeName = "save_$backedUp"
+        $destFolder = Join-Path $backupDir $safeName
+        New-Item -Path $destFolder -ItemType Directory -Force | Out-Null
+        try {
+            if ($loc.FilesOnly) {
+                foreach ($fileName in $loc.FilesOnly) {
+                    $src = Join-Path $loc.Path $fileName
+                    if (Test-Path $src) { Copy-Item -LiteralPath $src -Destination (Join-Path $destFolder $fileName) -Force }
+                }
+                $manifest.entries += @{ backup_folder = $safeName; original_path = $loc.Path; label = $loc.Label; files_only = $loc.FilesOnly }
+            }
+            else {
+                Copy-Item -Path "$($loc.Path)\*" -Destination $destFolder -Recurse -Force
+                $manifest.entries += @{ backup_folder = $safeName; original_path = $loc.Path; label = $loc.Label; files_only = $null }
+            }
+            Write-Host "    [+] $($loc.Label)" -ForegroundColor Green
+            $backedUp++
+        }
+        catch {
+            Write-Host "    [-] Failed: $($loc.Label) — $($_.Exception.Message)" -ForegroundColor Yellow
+        }
+    }
+
+    $manifest.entries = @($manifest.entries)
+    $manifest | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $backupDir "backup_manifest.json") -Encoding UTF8
+    Write-Host "    [+] Backed up $backedUp save location(s) to $backupDir" -ForegroundColor Green
+}
+else {
+    Write-Host "    [~] No save files found (first activation or saves stored elsewhere)" -ForegroundColor DarkGray
+}
+
+Write-Host "`nGenerating report..." -ForegroundColor Green
 
 # ---- Begin report generation ----
 
