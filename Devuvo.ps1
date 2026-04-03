@@ -1,12 +1,10 @@
-﻿# Devuvo validation script - updated 2026-04-04
-param(
-    [string]$AppID,
-    [switch]$Restore
-)
-
-if ([string]::IsNullOrWhiteSpace($AppID)) {
-    $AppID = Read-Host "Enter Steam AppID"
+# Devuvo validation script - updated 2026-04-04
+if (-not $AppID) {
+    if ([string]::IsNullOrWhiteSpace($AppID)) {
+        $AppID = Read-Host "Enter Steam AppID"
+    }
 }
+if (-not $Restore) { $Restore = $false }
 
 # ========================
 # RESTORE MODE
