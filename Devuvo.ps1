@@ -130,7 +130,24 @@ if ($updateBlocked) {
     $reportData.WindowsUpdateBlocked = $true
 }
 else {
-    Write-Host "`n    [-] Windows Update is NOT blocked." -ForegroundColor Red
+    Write-Host "`n    [-] Windows Update is NOT blocked. Attempting to disable it automatically..." -ForegroundColor Yellow
+    try {
+        # Stop the service if running
+        if ($wuauserv -and $wuauserv.Status -ne "Stopped") {
+            Stop-Service -Name "wuauserv" -Force -ErrorAction Stop
+            Write-Host "    [+] Stopped wuauserv service." -ForegroundColor Green
+        }
+        # Disable startup
+        Set-Service -Name "wuauserv" -StartupType Disabled -ErrorAction Stop
+        Write-Host "    [+] Disabled wuauserv startup." -ForegroundColor Green
+        $updateBlocked = $true
+        $reportData.WindowsUpdateBlocked = $true
+        Write-Host "    [+] Windows Update is now BLOCKED." -ForegroundColor Green
+    }
+    catch {
+        Write-Host "    [-] Failed to disable Windows Update automatically: $($_.Exception.Message)" -ForegroundColor Red
+        Write-Host "    [!] Try running this script as Administrator, or disable it manually using WUB." -ForegroundColor Yellow
+    }
 }
 # 5. Gate check - stop if something is wrong
 $issues = @()
