@@ -330,60 +330,25 @@ else {
     $luaFiles = @()
 }
 
-$modifiedFilesCount = 0
-
 foreach ($luaFile in $luaFiles) {
     $reportData.LuaFileFound = $true
-    $content = Get-Content $luaFile.FullName
-    $modified = $false
-    $newContent = @()
-    $alreadyConfigured = $true
 
-    foreach ($line in $content) {
-        if ($line -match "^\s*--\s*(addappid\(\s*$AppID\s*\)\s*)$") {
-            $newContent += $matches[1]
-            $modified = $true
-            $alreadyConfigured = $false
-        }
-        elseif (($line -match "(?i)setManifestid\(" -or $line -match "(?i)addappid\(.+,.+,.+\)") -and $line -notmatch "^\s*--") {
-            $newContent += "-- $line"
-            $modified = $true
-            $alreadyConfigured = $false
-        }
-        else {
-            $newContent += $line
-        }
-    }
-
-    # Check if lua is already correctly configured
+    # Check if lua is already correctly configured (read-only)
     $luaRaw = Get-Content $luaFile.FullName -Raw
     $manifestCommented = ($luaRaw -match "(?m)^\s*--\s*setManifestid\(") -or ($luaRaw -notmatch "setManifestid\(")
     $dlcCommented = ($luaRaw -notmatch "(?m)^addappid\(.+,.+,.+\)") # no uncommented DLC lines
     if ($manifestCommented -and $dlcCommented) {
         $reportData.UpdatesDisabled = $true
-    }
-
-    if ($modified) {
-        try {
-            $newContent | Set-Content $luaFile.FullName
-            Write-Host "    [+] Modified update/decryption/depot lines in: $($luaFile.Name)" -ForegroundColor Green
-            $modifiedFilesCount++
-            $reportData.UpdatesDisabled = $true
-        }
-        catch {
-            Write-Host "    [-] Failed to write to $($luaFile.Name): $($_.Exception.Message)" -ForegroundColor Red
-        }
+        Write-Host "    [+] $($luaFile.Name) is correctly configured." -ForegroundColor Green
     }
     else {
-        Write-Host "    [~] No changes needed in: $($luaFile.Name) (already configured)" -ForegroundColor DarkGray
+        Write-Host "    [!] $($luaFile.Name) has update/decryption lines that need manual attention." -ForegroundColor Yellow
     }
 }
 
 if ($luaFiles.Count -eq 0) {
     Write-Host "    [-] No .lua file found for AppID $AppID in stplug-in." -ForegroundColor Yellow
 }
-
-Write-Host "`n[*] Done! Modified $modifiedFilesCount .lua files." -ForegroundColor Cyan
 
 # 7. System info collection
 $machineGuid = $null
