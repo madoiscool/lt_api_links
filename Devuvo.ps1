@@ -1,10 +1,20 @@
 # Devuvo validation script - updated 2026-04-04
-if (-not $AppID) {
-    if ([string]::IsNullOrWhiteSpace($AppID)) {
-        $AppID = Read-Host "Enter Steam AppID"
-    }
-}
 if (-not $Restore) { $Restore = $false }
+
+# Interactive mode selector when run via irm | iex
+if (-not $AppID -and -not $Restore) {
+    Write-Host ""
+    Write-Host "=== Devuvo ===" -ForegroundColor Cyan
+    Write-Host "[1] Validate (generate report)" -ForegroundColor Green
+    Write-Host "[2] Restore save backup" -ForegroundColor Yellow
+    Write-Host ""
+    $choice = Read-Host "Select option (1 or 2)"
+    if ($choice -eq "2") { $Restore = $true }
+}
+
+if (-not $AppID -or [string]::IsNullOrWhiteSpace($AppID)) {
+    $AppID = Read-Host "Enter Steam AppID"
+}
 
 # ========================
 # RESTORE MODE
