@@ -1,8 +1,8 @@
 # Devuvo validation script - updated 2026-04-04
 if (-not $Restore) { $Restore = $false }
 
-# Interactive mode selector when run via irm | iex
-if (-not $AppID -and -not $Restore) {
+# Interactive mode selector
+if (-not $Restore) {
     Write-Host ""
     Write-Host "=== Devuvo ===" -ForegroundColor Cyan
     Write-Host "[1] Validate (generate report)" -ForegroundColor Green
