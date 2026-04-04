@@ -335,19 +335,18 @@ if ($firstWord) {
                 $saveLocations += @{ Path = $dir.FullName; Label = $relLabel }
             }
         }
-        # Search inside known publisher folders (e.g. CAPCOM/<game>, SEGA/<game>)
-        foreach ($pub in $knownPublishers) {
-            $pubDir = Join-Path $extDir $pub
-            if (Test-Path $pubDir) {
-                $subDirs = Get-ChildItem -Path $pubDir -Directory -ErrorAction SilentlyContinue | Where-Object {
-                    $_.Name -match [regex]::Escape($firstWord)
-                }
-                foreach ($dir in $subDirs) {
-                    $relLabel = $dir.FullName.Replace($env:USERPROFILE, "~")
-                    $already = $saveLocations | Where-Object { $_.Path -eq $dir.FullName }
-                    if (-not $already) {
-                        $saveLocations += @{ Path = $dir.FullName; Label = $relLabel }
-                    }
+        # Search inside ALL subfolders one level deep (e.g. Team Cherry/Hollow Knight, CAPCOM/RE9, etc.)
+        $topDirs = Get-ChildItem -Path $extDir -Directory -ErrorAction SilentlyContinue
+        foreach ($topDir in $topDirs) {
+            $subDirs = Get-ChildItem -Path $topDir.FullName -Directory -ErrorAction SilentlyContinue | Where-Object {
+                $_.Name -match [regex]::Escape($firstWord)
+            }
+            foreach ($dir in $subDirs) {
+                if ($dir.Name -eq "Goldberg SteamEmu Saves") { continue }
+                $relLabel = $dir.FullName.Replace($env:USERPROFILE, "~")
+                $already = $saveLocations | Where-Object { $_.Path -eq $dir.FullName }
+                if (-not $already) {
+                    $saveLocations += @{ Path = $dir.FullName; Label = $relLabel }
                 }
             }
         }
