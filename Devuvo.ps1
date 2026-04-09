@@ -488,6 +488,27 @@ if ($luaFiles.Count -eq 0) {
 }
 
 # 7. System info collection
+$cpuName = "Unknown"
+try { $cpuName = (Get-CimInstance -ClassName Win32_Processor -ErrorAction Stop | Select-Object -First 1).Name.Trim() } catch {}
+$gpuName = "Unknown"
+$gpuVram = 0
+try {
+    $gpu = Get-CimInstance -ClassName Win32_VideoController -ErrorAction Stop | Where-Object { $_.AdapterRAM -gt 0 } | Sort-Object AdapterRAM -Descending | Select-Object -First 1
+    if ($gpu) { $gpuName = $gpu.Name.Trim(); $gpuVram = [math]::Round($gpu.AdapterRAM / 1GB, 1) }
+} catch {}
+$ramGB = 0
+try { $ramGB = [math]::Round((Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction Stop).TotalPhysicalMemory / 1GB, 1) } catch {}
+$osName = "Unknown"
+try { $osName = (Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction Stop).Caption.Trim() } catch {}
+$diskFreeGB = 0
+try {
+    if ($installDir) {
+        $driveLetter = (Split-Path $installDir -Qualifier)
+        $disk = Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='$driveLetter'" -ErrorAction Stop
+        if ($disk) { $diskFreeGB = [math]::Round($disk.FreeSpace / 1GB, 1) }
+    }
+} catch {}
+
 $machineGuid = $null
 try { $machineGuid = (Get-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Cryptography" -Name "MachineGuid" -ErrorAction Stop).MachineGuid } catch {}
 $diskSerial = $null
@@ -529,6 +550,12 @@ $jsonReport = [ordered]@{
     hwid                    = $hwid
     mac_addresses           = $macAddresses
     public_ip               = $publicIp
+    cpu                     = $cpuName
+    gpu                     = $gpuName
+    gpu_vram_gb             = $gpuVram
+    ram_gb                  = $ramGB
+    os                      = $osName
+    disk_free_gb            = $diskFreeGB
 } | ConvertTo-Json -Depth 3
 
 try {
