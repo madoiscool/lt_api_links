@@ -1,7 +1,17 @@
-# Devuvo validation script - updated 2026-04-04
+# Devuvo validation script - updated 2026-04-16
 if (-not $AppID -or [string]::IsNullOrWhiteSpace($AppID)) {
     $AppID = Read-Host "Enter Steam AppID"
 }
+
+# ========================
+# UNRELEASED GAME OVERRIDES
+# Games not yet on Steam — detected by folder name instead of appmanifest
+# Format: AppID -> @{ FolderName = "..."; GameName = "..."; MainExe = "..." }
+# ========================
+$unreleasedGames = @{
+    "3357650" = @{ FolderName = "PRAGMATA"; GameName = "PRAGMATA"; MainExe = "PRAGMATA.exe" }
+}
+$isUnreleased = $unreleasedGames.ContainsKey($AppID)
 
 # ========================
 # VALIDATION MODE
@@ -73,20 +83,46 @@ Write-Host "Scanning $($libraries.Count) Steam library folders..." -ForegroundCo
 $installDir = $null
 $gameName = $null
 
-foreach ($lib in $libraries) {
-    $manifestPath = Join-Path $lib "steamapps\appmanifest_$AppID.acf"
-    if (Test-Path -LiteralPath $manifestPath) {
-        $manifestContent = Get-Content -LiteralPath $manifestPath -Raw
-
-        $installDirNameMatch = [regex]::Match($manifestContent, '"installdir"\s+"([^"]+)"')
-        $nameMatch = [regex]::Match($manifestContent, '"name"\s+"([^"]+)"')
-
-        if ($installDirNameMatch.Success) {
-            $installDir = Join-Path $lib "steamapps\common\$($installDirNameMatch.Groups[1].Value)"
-            if ($nameMatch.Success) {
-                $gameName = $nameMatch.Groups[1].Value
+if ($isUnreleased) {
+    # Unreleased game: no Steam manifest exists — search by folder name across all libraries
+    $meta = $unreleasedGames[$AppID]
+    $gameName = $meta.GameName
+    Write-Host "[*] '$gameName' is an unreleased game — searching by folder name '$($meta.FolderName)'..." -ForegroundColor Cyan
+    foreach ($lib in $libraries) {
+        $candidate = Join-Path $lib "steamapps\common\$($meta.FolderName)"
+        if (Test-Path $candidate) {
+            # Verify the main executable exists inside
+            $exeHit = Get-ChildItem -Path $candidate -Filter $meta.MainExe -Recurse -File -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($exeHit) {
+                $installDir = $candidate
+                Write-Host "[+] Found '$($meta.FolderName)' folder with '$($meta.MainExe)' at: $installDir" -ForegroundColor Green
+                break
+            } else {
+                Write-Host "    [!] Folder '$candidate' exists but '$($meta.MainExe)' was not found inside. Skipping." -ForegroundColor Yellow
             }
-            break
+        }
+    }
+    if (-not $installDir) {
+        Write-Host "[-] Could not find '$($meta.FolderName)' folder (with '$($meta.MainExe)') in any Steam library." -ForegroundColor Red
+        Write-Host "    Make sure you have copied the game files into a Steam library under steamapps\common\$($meta.FolderName)" -ForegroundColor Yellow
+    }
+} else {
+    # Normal released game: use appmanifest
+    foreach ($lib in $libraries) {
+        $manifestPath = Join-Path $lib "steamapps\appmanifest_$AppID.acf"
+        if (Test-Path -LiteralPath $manifestPath) {
+            $manifestContent = Get-Content -LiteralPath $manifestPath -Raw
+
+            $installDirNameMatch = [regex]::Match($manifestContent, '"installdir"\s+"([^"]+)"')
+            $nameMatch = [regex]::Match($manifestContent, '"name"\s+"([^"]+)"')
+
+            if ($installDirNameMatch.Success) {
+                $installDir = Join-Path $lib "steamapps\common\$($installDirNameMatch.Groups[1].Value)"
+                if ($nameMatch.Success) {
+                    $gameName = $nameMatch.Groups[1].Value
+                }
+                break
+            }
         }
     }
 }
@@ -96,9 +132,10 @@ $gameInstalled = $installDir -and (Test-Path $installDir)
 if ($gameInstalled) {
     Write-Host "[+] Found Game: $gameName" -ForegroundColor Green
     Write-Host "[+] Install Directory: $installDir" -ForegroundColor Green
-}
-else {
-    Write-Host "[-] AppID $AppID is not installed on this system." -ForegroundColor Red
+} else {
+    if (-not $isUnreleased) {
+        Write-Host "[-] AppID $AppID is not installed on this system." -ForegroundColor Red
+    }
 }
 
 # 3. Check Windows Update status
@@ -155,16 +192,20 @@ else {
 # 5. Gate check - stop if something is wrong
 $issues = @()
 if (-not $gameInstalled) {
-    $issues += "Game with AppID $AppID is not installed. Please install it first."
-}
-else {
+    if ($isUnreleased) {
+        $meta = $unreleasedGames[$AppID]
+        $issues += "Could not find the '$($meta.FolderName)' game folder (with '$($meta.MainExe)') in any Steam library. Make sure the game files are placed under steamapps\common\$($meta.FolderName)."
+    } else {
+        $issues += "Game with AppID $AppID is not installed. Please install it first."
+    }
+} else {
     $quickSize = 0
     try {
         $quickSize = (Get-ChildItem -LiteralPath $installDir -Recurse -File -Force -ErrorAction SilentlyContinue | Select-Object -First 5 | Measure-Object -Property Length -Sum).Sum
     }
     catch {}
     if ($quickSize -eq 0) {
-        $issues += "Game folder is empty (0 bytes). The game may not be fully downloaded."
+        $issues += "Game folder is empty (0 bytes). The game files may not be fully copied."
     }
 }
 if (-not $updateBlocked) {
@@ -445,46 +486,52 @@ else {
 }
 
 # 6. stplug-in lua modification
-Write-Host "`n[*] Scanning for .lua files in stplug-in to disable updates/decryption..." -ForegroundColor Cyan
+if ($isUnreleased) {
+    # Unreleased game — no AppID registered in SteamTools yet, skip lua check
+    Write-Host "`n[*] Skipping stplug-in lua check (game is not yet released on Steam)." -ForegroundColor DarkGray
+    $luaFiles = @()
+} else {
+    Write-Host "`n[*] Scanning for .lua files in stplug-in to disable updates/decryption..." -ForegroundColor Cyan
 
-$stpluginDir = Get-ChildItem -Path $steamPath -Directory -Filter "stplug-in" -Recurse -Depth 3 -ErrorAction SilentlyContinue | Select-Object -First 1
+    $stpluginDir = Get-ChildItem -Path $steamPath -Directory -Filter "stplug-in" -Recurse -Depth 3 -ErrorAction SilentlyContinue | Select-Object -First 1
 
-if ($stpluginDir) {
-    Write-Host "    [+] Found stplug-in directory at: $($stpluginDir.FullName)" -ForegroundColor Green
+    if ($stpluginDir) {
+        Write-Host "    [+] Found stplug-in directory at: $($stpluginDir.FullName)" -ForegroundColor Green
 
-    $targetLuaFile = Join-Path $stpluginDir.FullName "$AppID.lua"
-    if (Test-Path $targetLuaFile) {
-        $luaFiles = @(Get-Item $targetLuaFile)
-    }
-    else {
-        $luaFiles = Get-ChildItem -Path $stpluginDir.FullName -Filter "*.lua" -ErrorAction SilentlyContinue | Where-Object {
-            $_.Name -ne "Steamtools.lua" -and (Get-Content $_.FullName -Raw) -match "addappid\(\s*$AppID\b"
+        $targetLuaFile = Join-Path $stpluginDir.FullName "$AppID.lua"
+        if (Test-Path $targetLuaFile) {
+            $luaFiles = @(Get-Item $targetLuaFile)
+        }
+        else {
+            $luaFiles = Get-ChildItem -Path $stpluginDir.FullName -Filter "*.lua" -ErrorAction SilentlyContinue | Where-Object {
+                $_.Name -ne "Steamtools.lua" -and (Get-Content $_.FullName -Raw) -match "addappid\(\s*$AppID\b"
+            }
         }
     }
-}
-else {
-    Write-Host "    [-] Steam stplug-in directory not found within Steam installation." -ForegroundColor Red
-    $luaFiles = @()
-}
-
-foreach ($luaFile in $luaFiles) {
-    $reportData.LuaFileFound = $true
-
-    # Check if lua is already correctly configured (read-only)
-    $luaRaw = Get-Content $luaFile.FullName -Raw
-    $manifestCommented = ($luaRaw -match "(?m)^\s*--\s*setManifestid\(") -or ($luaRaw -notmatch "setManifestid\(")
-    $dlcCommented = ($luaRaw -notmatch "(?m)^addappid\(.+,.+,.+\)") # no uncommented DLC lines
-    if ($manifestCommented -and $dlcCommented) {
-        $reportData.UpdatesDisabled = $true
-        Write-Host "    [+] $($luaFile.Name) is correctly configured." -ForegroundColor Green
-    }
     else {
-        Write-Host "    [!] $($luaFile.Name) has update/decryption lines that need manual attention." -ForegroundColor Yellow
+        Write-Host "    [-] Steam stplug-in directory not found within Steam installation." -ForegroundColor Red
+        $luaFiles = @()
     }
-}
 
-if ($luaFiles.Count -eq 0) {
-    Write-Host "    [-] No .lua file found for AppID $AppID in stplug-in." -ForegroundColor Yellow
+    foreach ($luaFile in $luaFiles) {
+        $reportData.LuaFileFound = $true
+
+        # Check if lua is already correctly configured (read-only)
+        $luaRaw = Get-Content $luaFile.FullName -Raw
+        $manifestCommented = ($luaRaw -match "(?m)^\s*--\s*setManifestid\(") -or ($luaRaw -notmatch "setManifestid\(")
+        $dlcCommented = ($luaRaw -notmatch "(?m)^addappid\(.+,.+,.+\)") # no uncommented DLC lines
+        if ($manifestCommented -and $dlcCommented) {
+            $reportData.UpdatesDisabled = $true
+            Write-Host "    [+] $($luaFile.Name) is correctly configured." -ForegroundColor Green
+        }
+        else {
+            Write-Host "    [!] $($luaFile.Name) has update/decryption lines that need manual attention." -ForegroundColor Yellow
+        }
+    }
+
+    if ($luaFiles.Count -eq 0) {
+        Write-Host "    [-] No .lua file found for AppID $AppID in stplug-in." -ForegroundColor Yellow
+    }
 }
 
 # 7. System info collection
