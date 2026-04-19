@@ -22,6 +22,8 @@ $customLaunchers = @{
     "3357650" = @{ Exe = "START_PRAG.exe"; GameName = "Pragmata" }
     # Resident Evil Requiem (Capcom)
     "3764200" = @{ Exe = "START_WITH_THIS_EXE.exe"; GameName = "Resident Evil Requiem" }
+    # Monster Hunter Stories 3: Twisted Reflection (Capcom)
+    "2852190" = @{ Exe = "START_MHS3.exe"; GameName = "Monster Hunter Stories 3: Twisted Reflection" }
 }
 
 # ========================
