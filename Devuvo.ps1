@@ -20,6 +20,8 @@ $isUnreleased = $unreleasedGames.ContainsKey($AppID)
 $customLaunchers = @{
     # Pragmata (Capcom)
     "3357650" = @{ Exe = "START_PRAG.exe"; GameName = "Pragmata" }
+    # Resident Evil Requiem (Capcom)
+    "3764200" = @{ Exe = "START_WITH_THIS_EXE.exe"; GameName = "Resident Evil Requiem" }
 }
 
 # ========================
