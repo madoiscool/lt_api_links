@@ -12,6 +12,17 @@ $unreleasedGames = @{}
 $isUnreleased = $unreleasedGames.ContainsKey($AppID)
 
 # ========================
+# CUSTOM LAUNCHER EXES
+# Games where Steam must be pointed at a specific exe (not the default one).
+# Format: AppID -> @{ Exe = "...exe"; GameName = "..." }
+# Script will auto-write `"<full path>\<Exe>" %command%` into Steam launch options.
+# ========================
+$customLaunchers = @{
+    # Pragmata (Capcom)
+    "3357650" = @{ Exe = "START_PRAG.exe"; GameName = "Pragmata" }
+}
+
+# ========================
 # VALIDATION MODE
 # ========================
 
@@ -654,6 +665,96 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
 Write-Host "`nRestarting Steam..." -ForegroundColor Cyan
 Stop-Process -Name "steam" -Force -ErrorAction SilentlyContinue
 Start-Sleep -Seconds 2
+
+# --- Set custom launch options (Steam must be closed for this to persist) ---
+if ($customLaunchers.ContainsKey($AppID) -and $installDir -and $steamPath) {
+    $cfg = $customLaunchers[$AppID]
+    Write-Host "[*] Setting Steam launch options for $($cfg.GameName)..." -ForegroundColor Cyan
+
+    # Resolve the launcher exe path — prefer existing location (root then recursive),
+    # otherwise default to "<installDir>\<Exe>" even if the exe isn't there yet.
+    $launcherPath = Join-Path $installDir $cfg.Exe
+    if (-not (Test-Path -LiteralPath $launcherPath)) {
+        $found = Get-ChildItem -Path $installDir -Filter $cfg.Exe -Recurse -File -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($found) { $launcherPath = $found.FullName }
+    }
+
+    $launchOptionString = '"' + $launcherPath + '" %command%'
+    # VDF-escape: backslashes doubled, quotes escaped
+    $vdfEscaped = ($launchOptionString -replace '\\', '\\') -replace '"', '\"'
+    $newValue = '"LaunchOptions"' + "`t`t" + '"' + $vdfEscaped + '"'
+
+    $userdataPath = Join-Path $steamPath "userdata"
+    $writtenCount = 0
+    # Write to BOTH localconfig (machine-local) AND sharedconfig (cloud-synced across machines).
+    # sharedconfig is what survives Steam Cloud resyncs and propagates to other installs.
+    $configFiles = @("localconfig.vdf", "sharedconfig.vdf")
+    if (Test-Path $userdataPath) {
+        $userDirs = @(Get-ChildItem -Path $userdataPath -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^\d+$' -and $_.Name -ne '0' })
+        foreach ($userDir in $userDirs) {
+            foreach ($configName in $configFiles) {
+                $vdfPath = Join-Path $userDir.FullName "config\$configName"
+                if (-not (Test-Path -LiteralPath $vdfPath)) { continue }
+
+                try {
+                    $vdfContent = Get-Content -LiteralPath $vdfPath -Raw -Encoding UTF8
+
+                    $blockOpen = [regex]::Match($vdfContent, '"' + [regex]::Escape($AppID) + '"\s*\{')
+                    if ($blockOpen.Success) {
+                        # Find matching close brace (track nesting)
+                        $startIdx = $blockOpen.Index + $blockOpen.Length
+                        $depth = 1
+                        $i = $startIdx
+                        while ($i -lt $vdfContent.Length -and $depth -gt 0) {
+                            $c = $vdfContent[$i]
+                            if ($c -eq '{') { $depth++ }
+                            elseif ($c -eq '}') { $depth-- }
+                            $i++
+                        }
+                        $endIdx = $i - 1
+                        $blockBody = $vdfContent.Substring($startIdx, $endIdx - $startIdx)
+
+                        # Handle escaped quotes inside string values
+                        $loPattern = '"LaunchOptions"\s+"(?:[^"\\]|\\.)*"'
+                        if ([regex]::IsMatch($blockBody, $loPattern)) {
+                            $newBody = [regex]::Replace($blockBody, $loPattern, { param($m) $newValue }, 1)
+                        }
+                        else {
+                            $newBody = "`r`n`t`t`t`t`t" + $newValue + $blockBody
+                        }
+
+                        $newContent = $vdfContent.Substring(0, $startIdx) + $newBody + $vdfContent.Substring($endIdx)
+                        Set-Content -LiteralPath $vdfPath -Value $newContent -Encoding UTF8 -NoNewline
+                        $writtenCount++
+                    }
+                    else {
+                        # AppID entry doesn't exist yet — inject a minimal block into "apps"
+                        $appsMatch = [regex]::Match($vdfContent, '"apps"\s*\{')
+                        if ($appsMatch.Success) {
+                            $insertPos = $appsMatch.Index + $appsMatch.Length
+                            $inject = "`r`n`t`t`t`t`"$AppID`"`r`n`t`t`t`t{`r`n`t`t`t`t`t$newValue`r`n`t`t`t`t}"
+                            $newContent = $vdfContent.Substring(0, $insertPos) + $inject + $vdfContent.Substring($insertPos)
+                            Set-Content -LiteralPath $vdfPath -Value $newContent -Encoding UTF8 -NoNewline
+                            $writtenCount++
+                        }
+                    }
+                }
+                catch {
+                    Write-Host "    [-] Failed on $vdfPath`: $($_.Exception.Message)" -ForegroundColor Yellow
+                }
+            }
+        }
+    }
+
+    if ($writtenCount -gt 0) {
+        Write-Host "    [+] Launch options written to $writtenCount config file(s) (local + shared)." -ForegroundColor Green
+        Write-Host "        $launchOptionString" -ForegroundColor DarkGray
+    }
+    else {
+        Write-Host "    [-] Could not update any Steam config file." -ForegroundColor Yellow
+    }
+}
+
 if ($steamPath) {
     Start-Process -FilePath (Join-Path $steamPath "steam.exe")
 }
