@@ -635,19 +635,30 @@ try {
 
         Set-Clipboard -Value $pasteCode
         Write-Host "`n    [+] Report uploaded successfully!" -ForegroundColor Green
-        Write-Host ""
-        Write-Host "    ============================================" -ForegroundColor Magenta
-        Write-Host "    ||                                        ||" -ForegroundColor Magenta
-        Write-Host "    ||   D-Report Code: " -ForegroundColor Magenta -NoNewline
-        Write-Host "$pasteCode" -ForegroundColor Yellow -NoNewline
-        Write-Host (" " * (21 - $pasteCode.Length)) -NoNewline
-        Write-Host "||" -ForegroundColor Magenta
-        Write-Host "    ||                                        ||" -ForegroundColor Magenta
-        Write-Host "    ||   Send this code inside your ticket!   ||" -ForegroundColor Magenta
-        Write-Host "    ||                                        ||" -ForegroundColor Magenta
-        Write-Host "    ============================================" -ForegroundColor Magenta
-        Write-Host ""
-        Write-Host "    (copied to clipboard)" -ForegroundColor Green
+
+        # For games that need launch options written, defer the D-Report code display
+        # until AFTER Steam restart — prevents users from closing the script early
+        # and skipping the launch options write.
+        $deferCodeDisplay = $customLaunchers.ContainsKey($AppID)
+
+        if (-not $deferCodeDisplay) {
+            Write-Host ""
+            Write-Host "    ============================================" -ForegroundColor Magenta
+            Write-Host "    ||                                        ||" -ForegroundColor Magenta
+            Write-Host "    ||   D-Report Code: " -ForegroundColor Magenta -NoNewline
+            Write-Host "$pasteCode" -ForegroundColor Yellow -NoNewline
+            Write-Host (" " * (21 - $pasteCode.Length)) -NoNewline
+            Write-Host "||" -ForegroundColor Magenta
+            Write-Host "    ||                                        ||" -ForegroundColor Magenta
+            Write-Host "    ||   Send this code inside your ticket!   ||" -ForegroundColor Magenta
+            Write-Host "    ||                                        ||" -ForegroundColor Magenta
+            Write-Host "    ============================================" -ForegroundColor Magenta
+            Write-Host ""
+            Write-Host "    (copied to clipboard)" -ForegroundColor Green
+        }
+        else {
+            Write-Host "    [*] D-Report Code will be shown after Steam restart + launch options setup." -ForegroundColor Cyan
+        }
     }
     else {
         Write-Host "    [-] Upload succeeded but no URL returned." -ForegroundColor Yellow
@@ -760,4 +771,24 @@ if ($steamPath) {
 }
 else {
     Write-Host "[-] Could not find Steam executable to restart." -ForegroundColor Red
+}
+
+# Deferred D-Report code display (for games where launch options were set)
+if ($deferCodeDisplay -and $pasteCode) {
+    Write-Host ""
+    Write-Host "    ============================================" -ForegroundColor Magenta
+    Write-Host "    ||                                        ||" -ForegroundColor Magenta
+    Write-Host "    ||   D-Report Code: " -ForegroundColor Magenta -NoNewline
+    Write-Host "$pasteCode" -ForegroundColor Yellow -NoNewline
+    Write-Host (" " * (21 - $pasteCode.Length)) -NoNewline
+    Write-Host "||" -ForegroundColor Magenta
+    Write-Host "    ||                                        ||" -ForegroundColor Magenta
+    Write-Host "    ||   Send this code inside your ticket!   ||" -ForegroundColor Magenta
+    Write-Host "    ||                                        ||" -ForegroundColor Magenta
+    Write-Host "    ============================================" -ForegroundColor Magenta
+    Write-Host ""
+    Write-Host "    (copied to clipboard)" -ForegroundColor Green
+    Write-Host ""
+    Write-Host "Press any key to exit..." -ForegroundColor Yellow
+    $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
 }
