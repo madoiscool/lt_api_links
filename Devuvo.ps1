@@ -647,7 +647,7 @@ try {
             Write-Host "    ||                                        ||" -ForegroundColor Magenta
             Write-Host "    ||   D-Report Code: " -ForegroundColor Magenta -NoNewline
             Write-Host "$pasteCode" -ForegroundColor Yellow -NoNewline
-            Write-Host (" " * (21 - $pasteCode.Length)) -NoNewline
+            Write-Host (" " * (22 - $pasteCode.Length)) -NoNewline
             Write-Host "||" -ForegroundColor Magenta
             Write-Host "    ||                                        ||" -ForegroundColor Magenta
             Write-Host "    ||   Send this code inside your ticket!   ||" -ForegroundColor Magenta
@@ -780,7 +780,7 @@ if ($deferCodeDisplay -and $pasteCode) {
     Write-Host "    ||                                        ||" -ForegroundColor Magenta
     Write-Host "    ||   D-Report Code: " -ForegroundColor Magenta -NoNewline
     Write-Host "$pasteCode" -ForegroundColor Yellow -NoNewline
-    Write-Host (" " * (21 - $pasteCode.Length)) -NoNewline
+    Write-Host (" " * (22 - $pasteCode.Length)) -NoNewline
     Write-Host "||" -ForegroundColor Magenta
     Write-Host "    ||                                        ||" -ForegroundColor Magenta
     Write-Host "    ||   Send this code inside your ticket!   ||" -ForegroundColor Magenta
