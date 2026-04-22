@@ -3,7 +3,8 @@
 
 param(
     [string]$DownloadLink, # Overwrites the download link (give a direct link)
-    [string]$PluginName # Overwrites the plugin name
+    [string]$PluginName, # Overwrites the plugin name
+    [int]$Branch # 1 for luatools, 2 for steamtools-collection (overwrites the above two options)
 )
 
 ## Configure this
@@ -24,6 +25,14 @@ if ( $DownloadLink ) {
 }
 if ( $PluginName ) {
     $name = $PluginName
+}
+
+
+# Second option to get steamtools-collection plugin
+# use $branch = 2 ; irm ... | iex
+if ($br -eq 2 -or $Branch -eq 2) {
+    $name = "steamtools-collection"
+    $link = "https://github.com/clemdotla/steamtools-collection/releases/download/Latest/steamtools-collection.zip"
 }
 
 
