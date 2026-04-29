@@ -19,9 +19,9 @@ $isUnreleased = $unreleasedGames.ContainsKey($AppID)
 # ========================
 $customLaunchers = @{
     # Pragmata (Capcom)
-    "3357650" = @{ Exe = "START_PRAG.exe"; GameName = "Pragmata" }
+    "3357650" = @{ Exe = "tokeer_launcher.exe"; GameName = "Pragmata" }
     # Resident Evil Requiem (Capcom)
-    "3764200" = @{ Exe = "START_WITH_THIS_EXE.exe"; GameName = "Resident Evil Requiem" }
+    "3764200" = @{ Exe = "tokeer_launcher.exe"; GameName = "Resident Evil Requiem" }
     # Monster Hunter Stories 3: Twisted Reflection (Capcom)
     "2852190" = @{ Exe = "tokeer_launcher.exe"; GameName = "Monster Hunter Stories 3: Twisted Reflection" }
     # Maneater (Denuvo + tokeer)
