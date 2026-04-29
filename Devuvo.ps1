@@ -28,6 +28,8 @@ $customLaunchers = @{
     "629820"  = @{ Exe = "tokeer_launcher.exe"; GameName = "Maneater" }
     # FAR: Changing Tides (Denuvo + tokeer)
     "1570010" = @{ Exe = "tokeer_launcher.exe"; GameName = "FAR: Changing Tides" }
+    # Maneater (Denuvo + tokeer)
+    "493340"  = @{ Exe = "tokeer_launcher.exe"; GameName = "Planet Coaster" }
 }
 
 # ========================
