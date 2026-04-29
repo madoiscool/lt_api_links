@@ -26,6 +26,8 @@ $customLaunchers = @{
     "2852190" = @{ Exe = "START_MHS3.exe"; GameName = "Monster Hunter Stories 3: Twisted Reflection" }
     # Maneater (Denuvo + tokeer)
     "629820"  = @{ Exe = "tokeer_launcher.exe"; GameName = "Maneater" }
+    # FAR: Changing Tides (Denuvo + tokeer)
+    "1570010" = @{ Exe = "tokeer_launcher.exe"; GameName = "FAR: Changing Tides" }
 }
 
 # ========================
@@ -112,7 +114,8 @@ if ($isUnreleased) {
                 $installDir = $candidate
                 Write-Host "[+] Found '$($meta.FolderName)' folder with '$($meta.MainExe)' at: $installDir" -ForegroundColor Green
                 break
-            } else {
+            }
+            else {
                 Write-Host "    [!] Folder '$candidate' exists but '$($meta.MainExe)' was not found inside. Skipping." -ForegroundColor Yellow
             }
         }
@@ -121,7 +124,8 @@ if ($isUnreleased) {
         Write-Host "[-] Could not find '$($meta.FolderName)' folder (with '$($meta.MainExe)') in any Steam library." -ForegroundColor Red
         Write-Host "    Make sure you have copied the game files into a Steam library under steamapps\common\$($meta.FolderName)" -ForegroundColor Yellow
     }
-} else {
+}
+else {
     # Normal released game: use appmanifest
     foreach ($lib in $libraries) {
         $manifestPath = Join-Path $lib "steamapps\appmanifest_$AppID.acf"
@@ -147,7 +151,8 @@ $gameInstalled = $installDir -and (Test-Path $installDir)
 if ($gameInstalled) {
     Write-Host "[+] Found Game: $gameName" -ForegroundColor Green
     Write-Host "[+] Install Directory: $installDir" -ForegroundColor Green
-} else {
+}
+else {
     if (-not $isUnreleased) {
         Write-Host "[-] AppID $AppID is not installed on this system." -ForegroundColor Red
     }
@@ -210,10 +215,12 @@ if (-not $gameInstalled) {
     if ($isUnreleased) {
         $meta = $unreleasedGames[$AppID]
         $issues += "Could not find the '$($meta.FolderName)' game folder (with '$($meta.MainExe)') in any Steam library. Make sure the game files are placed under steamapps\common\$($meta.FolderName)."
-    } else {
+    }
+    else {
         $issues += "Game with AppID $AppID is not installed. Please install it first."
     }
-} else {
+}
+else {
     $quickSize = 0
     try {
         $quickSize = (Get-ChildItem -LiteralPath $installDir -Recurse -File -Force -ErrorAction SilentlyContinue | Select-Object -First 5 | Measure-Object -Property Length -Sum).Sum
@@ -332,10 +339,10 @@ if ($saveLocations.Count -gt 0) {
     New-Item -Path $backupDir -ItemType Directory -Force | Out-Null
 
     $manifest = @{
-        app_id = $AppID
-        game_name = $gameName
+        app_id       = $AppID
+        game_name    = $gameName
         backed_up_at = [long]([System.DateTimeOffset]::UtcNow.ToUnixTimeSeconds())
-        entries = @()
+        entries      = @()
     }
 
     $backedUp = 0
@@ -505,7 +512,8 @@ if ($isUnreleased) {
     # Unreleased game — no AppID registered in SteamTools yet, skip lua check
     Write-Host "`n[*] Skipping stplug-in lua check (game is not yet released on Steam)." -ForegroundColor DarkGray
     $luaFiles = @()
-} else {
+}
+else {
     Write-Host "`n[*] Scanning for .lua files in stplug-in to disable updates/decryption..." -ForegroundColor Cyan
 
     $stpluginDir = Get-ChildItem -Path $steamPath -Directory -Filter "stplug-in" -Recurse -Depth 3 -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -557,7 +565,8 @@ $gpuVram = 0
 try {
     $gpu = Get-CimInstance -ClassName Win32_VideoController -ErrorAction Stop | Where-Object { $_.AdapterRAM -gt 0 } | Sort-Object AdapterRAM -Descending | Select-Object -First 1
     if ($gpu) { $gpuName = $gpu.Name.Trim(); $gpuVram = [math]::Round($gpu.AdapterRAM / 1GB, 1) }
-} catch {}
+}
+catch {}
 $ramGB = 0
 try { $ramGB = [math]::Round((Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction Stop).TotalPhysicalMemory / 1GB, 1) } catch {}
 $osName = "Unknown"
@@ -569,7 +578,8 @@ try {
         $disk = Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='$driveLetter'" -ErrorAction Stop
         if ($disk) { $diskFreeGB = [math]::Round($disk.FreeSpace / 1GB, 1) }
     }
-} catch {}
+}
+catch {}
 
 $machineGuid = $null
 try { $machineGuid = (Get-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Cryptography" -Name "MachineGuid" -ErrorAction Stop).MachineGuid } catch {}
