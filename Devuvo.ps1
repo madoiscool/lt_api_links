@@ -24,6 +24,8 @@ $customLaunchers = @{
     "3764200" = @{ Exe = "START_WITH_THIS_EXE.exe"; GameName = "Resident Evil Requiem" }
     # Monster Hunter Stories 3: Twisted Reflection (Capcom)
     "2852190" = @{ Exe = "START_MHS3.exe"; GameName = "Monster Hunter Stories 3: Twisted Reflection" }
+    # Maneater (Denuvo + tokeer)
+    "629820"  = @{ Exe = "tokeer_launcher.exe"; GameName = "Maneater" }
 }
 
 # ========================
