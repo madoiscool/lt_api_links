@@ -213,6 +213,26 @@ else {
         Write-Host "    [!] Try running this script as Administrator, or disable it manually using WUB." -ForegroundColor Yellow
     }
 }
+
+# 3.5 Check and Add Windows Defender Exclusions
+$defenderExcludedAppIDs = @("2852190", "3764200", "3357650")
+if ($gameInstalled -and $AppID -in $defenderExcludedAppIDs) {
+    Write-Host "`n[*] Adding Windows Defender exclusion for the game folder..." -ForegroundColor Cyan
+    try {
+        # Check if running as Admin
+        $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+        if ($isAdmin) {
+            # Note: We must use Add-MpPreference instead of Set-MpPreference so we don't overwrite user's existing exclusions
+            Add-MpPreference -ExclusionPath $installDir -ErrorAction Stop
+            Write-Host "    [+] Successfully added Defender exclusion for: $installDir" -ForegroundColor Green
+        } else {
+            Write-Host "    [-] Cannot add Defender exclusion: Script is not running as Administrator." -ForegroundColor Yellow
+        }
+    } catch {
+        Write-Host "    [-] Failed to add Defender exclusion automatically: $($_.Exception.Message)" -ForegroundColor Red
+    }
+}
+
 # 5. Gate check - stop if something is wrong
 $issues = @()
 if (-not $gameInstalled) {
