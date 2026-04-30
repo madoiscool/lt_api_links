@@ -32,6 +32,8 @@ $customLaunchers = @{
     "493340"  = @{ Exe = "tokeer_launcher.exe"; GameName = "Planet Coaster" }
     # Crimson Desert (Denuvo + tokeer)
     "3321460" = @{ Exe = "tokeer_launcher.exe"; GameName = "Crimson Desert" }
+    # Sonic Forces (Denuvo + tokeer)
+    "637100"  = @{ Exe = "tokeer_launcher.exe"; GameName = "Sonic Forces" }
 }
 
 # ========================
@@ -225,10 +227,12 @@ if ($gameInstalled -and $AppID -in $defenderExcludedAppIDs) {
             # Note: We must use Add-MpPreference instead of Set-MpPreference so we don't overwrite user's existing exclusions
             Add-MpPreference -ExclusionPath $installDir -ErrorAction Stop
             Write-Host "    [+] Successfully added Defender exclusion for: $installDir" -ForegroundColor Green
-        } else {
+        }
+        else {
             Write-Host "    [-] Cannot add Defender exclusion: Script is not running as Administrator." -ForegroundColor Yellow
         }
-    } catch {
+    }
+    catch {
         Write-Host "    [-] Failed to add Defender exclusion automatically: $($_.Exception.Message)" -ForegroundColor Red
     }
 }
