@@ -28,12 +28,16 @@ $customLaunchers = @{
     "629820"  = @{ Exe = "tokeer_launcher.exe"; GameName = "Maneater" }
     # FAR: Changing Tides (Denuvo + tokeer)
     "1570010" = @{ Exe = "tokeer_launcher.exe"; GameName = "FAR: Changing Tides" }
-    # Maneater (Denuvo + tokeer)
+    # Planet Coaster (Denuvo + tokeer)
     "493340"  = @{ Exe = "tokeer_launcher.exe"; GameName = "Planet Coaster" }
     # Crimson Desert (Denuvo + tokeer)
     "3321460" = @{ Exe = "tokeer_launcher.exe"; GameName = "Crimson Desert" }
     # Sonic Forces (Denuvo + tokeer)
     "637100"  = @{ Exe = "tokeer_launcher.exe"; GameName = "Sonic Forces" }
+    # Planet Coaster 2 (Denuvo + tokeer)
+    "2688950" = @{ Exe = "tokeer_launcher.exe"; GameName = "Planet Coaster 2" }
+    # Black Myth: Wukong (Denuvo + tokeer)
+    "2358720" = @{ Exe = "tokeer_launcher.exe"; GameName = "Black Myth: Wukong" }
 }
 
 # ========================
