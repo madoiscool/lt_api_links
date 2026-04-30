@@ -644,6 +644,7 @@ $jsonReport = [ordered]@{
     appid                   = $reportData.AppID
     game_name               = $reportData.GameName
     installed               = $reportData.Installed
+    install_dir             = $installDir
     folder_size             = $reportData.FolderSize
     exe_files               = $reportData.ExeFiles
     has_goldberg            = $reportData.HasGoldberg
