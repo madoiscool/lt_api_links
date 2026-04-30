@@ -38,6 +38,8 @@ $customLaunchers = @{
     "2688950" = @{ Exe = "tokeer_launcher.exe"; GameName = "Planet Coaster 2" }
     # Black Myth: Wukong (Denuvo + tokeer)
     "2358720" = @{ Exe = "tokeer_launcher.exe"; GameName = "Black Myth: Wukong" }
+    # Stellar Blade (Denuvo + tokeer)
+    "3489700" = @{ Exe = "tokeer_launcher.exe"; GameName = "Stellar Blade" }
 }
 
 # ========================
