@@ -1,5 +1,6 @@
 {
   "rewrites": [
+    { "source": "/Devuvo.ps1", "destination": "/api/devuvo" },
     { "source": "/st.ps1", "destination": "/api/st" }
   ]
 }
