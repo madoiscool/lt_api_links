@@ -40,6 +40,47 @@ $customLaunchers = @{
     "2358720" = @{ Exe = "tokeer_launcher.exe"; GameName = "Black Myth: Wukong" }
     # Stellar Blade (Denuvo + tokeer)
     "3489700" = @{ Exe = "tokeer_launcher.exe"; GameName = "Stellar Blade" }
+    # METAL GEAR SOLID V: THE PHANTOM PAIN (Denuvo + tokeer)
+    "287700"  = @{ Exe = "tokeer_launcher.exe"; GameName = "METAL GEAR SOLID V: THE PHANTOM PAIN" }
+    # Sniper Elite 4 (Denuvo + tokeer)
+    "312660"  = @{ Exe = "tokeer_launcher.exe"; GameName = "Sniper Elite 4" }
+    # Total War: WARHAMMER II (Denuvo + tokeer)
+    "594570"  = @{ Exe = "tokeer_launcher.exe"; GameName = "Total War: WARHAMMER II" }
+    # Sword Art Online: Fatal Bullet (Denuvo + tokeer)
+    "626690"  = @{ Exe = "tokeer_launcher.exe"; GameName = "Sword Art Online: Fatal Bullet" }
+    # Atomic Heart
+    "668580"  = @{ Exe = "tokeer_launcher.exe"; GameName = "Atomic Heart" }
+    # Hogwarts Legacy (Denuvo + tokeer)
+    "990080"  = @{ Exe = "tokeer_launcher.exe"; GameName = "Hogwarts Legacy" }
+    # Sniper Elite 5 (Denuvo + tokeer)
+    "1029690" = @{ Exe = "tokeer_launcher.exe"; GameName = "Sniper Elite 5" }
+    # Total War: WARHAMMER III (Denuvo + tokeer)
+    "1142710" = @{ Exe = "tokeer_launcher.exe"; GameName = "Total War: WARHAMMER III" }
+    # Sonic Frontiers (Denuvo + tokeer)
+    "1237320" = @{ Exe = "tokeer_launcher.exe"; GameName = "Sonic Frontiers" }
+    # Shin Megami Tensei III Nocturne HD Remaster (Denuvo + tokeer)
+    "1413480" = @{ Exe = "tokeer_launcher.exe"; GameName = "Shin Megami Tensei III Nocturne HD Remaster" }
+    # Persona 5 Royal (Denuvo + tokeer)
+    "1687950" = @{ Exe = "tokeer_launcher.exe"; GameName = "Persona 5 Royal" }
+    # Dead Space (Denuvo + tokeer)
+    "1693980" = @{ Exe = "tokeer_launcher.exe"; GameName = "Dead Space" }
+    # Warhammer Age of Sigmar: Realms of Ruin (Denuvo + tokeer)
+    "1844380" = @{ Exe = "tokeer_launcher.exe"; GameName = "Warhammer Age of Sigmar: Realms of Ruin" }
+    # Mortal Kombat 1 (Denuvo + tokeer)
+    "1971870" = @{ Exe = "tokeer_launcher.exe"; GameName = "Mortal Kombat 1" }
+    # Persona 3 Reload (Denuvo + tokeer)
+    "2161700" = @{ Exe = "tokeer_launcher.exe"; GameName = "Persona 3 Reload" }
+    # Like a Dragon Gaiden: The Man Who Erased His Name (Denuvo + tokeer)
+    "2375550" = @{ Exe = "tokeer_launcher.exe"; GameName = "Like a Dragon Gaiden: The Man Who Erased His Name" }
+    # SONIC X SHADOW GENERATIONS (Denuvo + tokeer)
+    "2513280" = @{ Exe = "tokeer_launcher.exe"; GameName = "SONIC X SHADOW GENERATIONS" }
+    # Like a Dragon: Pirate Yakuza in Hawaii (Denuvo + tokeer)
+    "3061810" = @{ Exe = "tokeer_launcher.exe"; GameName = "Like a Dragon: Pirate Yakuza in Hawaii" }
+    # WWE 2K26 (Denuvo + tokeer)
+    "3717070" = @{ Exe = "tokeer_launcher.exe"; GameName = "WWE 2K26" }
+
+
+    
 }
 
 # ========================
