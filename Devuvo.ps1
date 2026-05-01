@@ -105,25 +105,58 @@ Write-Host "Looking for Steam installation..." -ForegroundColor Cyan
 # 1. Find Steam Path and Library Folders
 $steamPath = $null
 
-# Try SteamExe first (most reliable — points to steam.exe)
+function Test-SteamRoot {
+    param([string]$Path)
+    if ([string]::IsNullOrWhiteSpace($Path)) { return $false }
+    $normalized = $Path.Replace("/", "\").Trim('"')
+    return (Test-Path -LiteralPath (Join-Path $normalized "steam.exe"))
+}
+
+function Add-SteamCandidate {
+    param(
+        [System.Collections.ArrayList]$Candidates,
+        [string]$Path
+    )
+    if ([string]::IsNullOrWhiteSpace($Path)) { return }
+    $normalized = $Path.Replace("/", "\").Trim('"')
+    if ($Candidates -notcontains $normalized) {
+        [void]$Candidates.Add($normalized)
+    }
+}
+
+$steamCandidates = [System.Collections.ArrayList]::new()
+
+# SteamExe should point to steam.exe, but some broken installs/registry states can
+# point at a game folder. Only accept its parent if steam.exe is actually there.
 $steamExe = (Get-ItemProperty -Path "HKCU:\Software\Valve\Steam" -Name "SteamExe" -ErrorAction SilentlyContinue).SteamExe
-if ($steamExe) {
-    $steamPath = (Split-Path $steamExe -Parent).Replace("/", "\")
+if ($steamExe -and ((Split-Path $steamExe -Leaf) -ieq "steam.exe")) {
+    Add-SteamCandidate -Candidates $steamCandidates -Path (Split-Path $steamExe -Parent)
 }
 
-# Fallback: HKLM InstallPath
-if (-not $steamPath -or -not (Test-Path $steamPath)) {
-    $steamPath = (Get-ItemProperty -Path "HKLM:\SOFTWARE\WOW6432Node\Valve\Steam" -Name "InstallPath" -ErrorAction SilentlyContinue).InstallPath
+# Registry install roots.
+Add-SteamCandidate -Candidates $steamCandidates -Path (Get-ItemProperty -Path "HKCU:\Software\Valve\Steam" -Name "SteamPath" -ErrorAction SilentlyContinue).SteamPath
+Add-SteamCandidate -Candidates $steamCandidates -Path (Get-ItemProperty -Path "HKLM:\SOFTWARE\WOW6432Node\Valve\Steam" -Name "InstallPath" -ErrorAction SilentlyContinue).InstallPath
+Add-SteamCandidate -Candidates $steamCandidates -Path (Get-ItemProperty -Path "HKLM:\SOFTWARE\Valve\Steam" -Name "InstallPath" -ErrorAction SilentlyContinue).InstallPath
+
+# Common fallback locations.
+Add-SteamCandidate -Candidates $steamCandidates -Path "C:\Program Files (x86)\Steam"
+Add-SteamCandidate -Candidates $steamCandidates -Path "C:\Program Files\Steam"
+
+foreach ($candidate in $steamCandidates) {
+    if (Test-SteamRoot $candidate) {
+        $steamPath = $candidate
+        break
+    }
 }
 
-# Fallback: SteamPath
-if (-not $steamPath -or -not (Test-Path $steamPath)) {
-    $steamPath = (Get-ItemProperty -Path "HKCU:\Software\Valve\Steam" -Name "SteamPath" -ErrorAction SilentlyContinue).SteamPath
-    if ($steamPath) { $steamPath = $steamPath.Replace("/", "\") }
-}
-
-if (-not $steamPath -or -not (Test-Path $steamPath)) {
+if (-not $steamPath) {
     Write-Host "[-] Could not find Steam installation." -ForegroundColor Red
+    if ($steamCandidates.Count -gt 0) {
+        Write-Host "    Checked paths:" -ForegroundColor Yellow
+        foreach ($candidate in $steamCandidates) {
+            Write-Host "    - $candidate" -ForegroundColor DarkGray
+        }
+    }
     Write-Host "Press any key to exit..."
     $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
     exit
