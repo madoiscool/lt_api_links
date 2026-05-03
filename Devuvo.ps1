@@ -2,10 +2,6 @@
 if (-not $AppID -or [string]::IsNullOrWhiteSpace($AppID)) {
     $AppID = Read-Host "Enter Steam AppID"
 }
-if (-not $AppID -or [string]::IsNullOrWhiteSpace($AppID)) {
-    Write-Host "No AppID provided. Please run the full command from your ticket." -ForegroundColor Red
-    exit 1
-}
 
 # ========================
 # UNRELEASED GAME OVERRIDES
@@ -337,7 +333,7 @@ else {
     }
     catch {}
     if ($quickSize -eq 0) {
-        $issues += 'Game folder is empty. The game files may not be fully copied.'
+        $issues += 'Game folder is empty (0 bytes). The game files may not be fully copied.'
     }
 }
 if (-not $updateBlocked) {
@@ -362,7 +358,6 @@ Write-Host "`n[*] Backing up game saves..." -ForegroundColor Cyan
 $backupRoot = Join-Path $env:USERPROFILE "Danny_Save_Backups"
 $backupDir = Join-Path $backupRoot $AppID
 $saveLocations = @()
-$backedUp = 0
 
 # Check game folder for save directories
 if ($installDir -and (Test-Path $installDir)) {
@@ -456,6 +451,7 @@ if ($saveLocations.Count -gt 0) {
         entries      = @()
     }
 
+    $backedUp = 0
     foreach ($loc in $saveLocations) {
         $safeName = "save_$backedUp"
         $destFolder = Join-Path $backupDir $safeName
@@ -517,20 +513,7 @@ Write-Host "[+] Exe files: $($exeFiles -join ', ')" -ForegroundColor Green
 
 # 5. Goldberg scan
 Write-Host "`n[*] Scanning for Goldberg Emulator files..." -ForegroundColor Cyan
-$goldbergIndicators = @(
-    "steam_settings",
-    "steam_interfaces.txt",
-    "coldclientloader.ini",
-    "local_save.txt",
-    "configs.user.ini",
-    "steam_appid.txt",
-    "account_name.txt",
-    "user_steam_id.txt",
-    "force_steamid.txt",
-    "force_account_name.txt",
-    "gbe.ini",
-    "goldberg.ini"
-)
+$goldbergIndicators = @("steam_settings", "steam_interfaces.txt", "coldclientloader.ini", "local_save.txt", "configs.user.ini")
 $foundGoldberg = $false
 
 foreach ($indicator in $goldbergIndicators) {
@@ -556,11 +539,10 @@ foreach ($dll in $steamDlls) {
 
 $reportData.HasGoldberg = $foundGoldberg
 if ($foundGoldberg) {
-    Write-Host "    [!] WARNING: Found Goldberg/GBE emulator files:" -ForegroundColor Yellow
+    Write-Host "    [!] WARNING: Found Goldberg Emulator files:" -ForegroundColor Yellow
     foreach ($f in $reportData.GoldbergFiles) {
         Write-Host "        - $f" -ForegroundColor Yellow
     }
-    Write-Host "    These are noted in the report, but validation will continue." -ForegroundColor Yellow
 }
 else {
     Write-Host "    [+] No obvious Goldberg files detected." -ForegroundColor Green
@@ -582,8 +564,6 @@ $conflictingNames = @(
     "steam_api_o.dll",
     "steam_api64_o.dll",
     "steamclient_loader.exe",
-    "steamclient.dll",
-    "steamclient64.dll",
     "codex.cfg",
     "codex64.dll",
     "3dmgame.dll",
@@ -681,38 +661,6 @@ else {
     }
 }
 
-Write-Host "`n[*] Validation scan summary:" -ForegroundColor Cyan
-if ($backedUp -gt 0) {
-    Write-Host "    [+] Save backup: $backedUp location(s) backed up to $backupDir" -ForegroundColor Green
-}
-else {
-    Write-Host "    [~] Save backup: no save files found" -ForegroundColor DarkGray
-}
-if ($reportData.HasGoldberg -or $reportData.GoldbergFiles.Count -gt 0) {
-    Write-Host "    [!] Goldberg/GBE files found: $($reportData.GoldbergFiles.Count) (warning only)" -ForegroundColor Yellow
-}
-else {
-    Write-Host "    [+] Goldberg/GBE files: none found" -ForegroundColor Green
-}
-if ($reportData.ConflictingFiles.Count -gt 0) {
-    Write-Host "    [-] Conflicting files found: $($reportData.ConflictingFiles.Count)" -ForegroundColor Red
-}
-else {
-    Write-Host "    [+] Conflicting files: none found" -ForegroundColor Green
-}
-if ($isUnreleased) {
-    Write-Host "    [~] Lua update/decryption check skipped for unreleased game" -ForegroundColor DarkGray
-}
-elseif (-not $reportData.LuaFileFound) {
-    Write-Host "    [!] Lua file: not found" -ForegroundColor Yellow
-}
-elseif ($reportData.UpdatesDisabled) {
-    Write-Host "    [+] Lua update/decryption lines: disabled" -ForegroundColor Green
-}
-else {
-    Write-Host "    [!] Lua update/decryption lines: manual attention needed" -ForegroundColor Yellow
-}
-
 # 7. System info collection
 $cpuName = "Unknown"
 try { $cpuName = (Get-CimInstance -ClassName Win32_Processor -ErrorAction Stop | Select-Object -First 1).Name.Trim() } catch {}
@@ -757,31 +705,6 @@ try { $publicIp = (Invoke-RestMethod -Uri "https://api.ipify.org?format=json" -T
 }
 $hwid = "$machineGuid|$diskSerial"
 
-
-# Final hard gate before upload. This prevents stale/partial scripts or skipped
-# branches from uploading reports with empty install data.
-$finalIssues = @()
-if (-not $reportData.Installed -or -not $installDir -or -not (Test-Path -LiteralPath $installDir)) {
-    $finalIssues += "Game install folder was not detected. Do not use this report code."
-}
-$finalFolderSize = 0
-try { $finalFolderSize = [int64]$reportData.FolderSize } catch { $finalFolderSize = 0 }
-if ($finalFolderSize -le 0) {
-    $finalIssues += "Game folder size is 0 bytes. The install detection failed or the folder is empty."
-}
-if (-not $reportData.WindowsUpdateBlocked) {
-    $finalIssues += "Windows Update is not blocked."
-}
-if ($finalIssues.Count -gt 0) {
-    Write-Host "`n[!] Report upload blocked because validation is incomplete:" -ForegroundColor Red
-    foreach ($issue in $finalIssues) {
-        Write-Host "    - $issue" -ForegroundColor Yellow
-    }
-    Write-Host "`nFix the issue above, then run the command again." -ForegroundColor Yellow
-    Write-Host "`nPress any key to exit..."
-    $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
-    exit
-}
 
 # 8. Upload report
 Write-Host "`n[*] Uploading report to give report code..." -ForegroundColor Cyan
