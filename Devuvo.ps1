@@ -362,6 +362,7 @@ Write-Host "`n[*] Backing up game saves..." -ForegroundColor Cyan
 $backupRoot = Join-Path $env:USERPROFILE "Danny_Save_Backups"
 $backupDir = Join-Path $backupRoot $AppID
 $saveLocations = @()
+$backedUp = 0
 
 # Check game folder for save directories
 if ($installDir -and (Test-Path $installDir)) {
@@ -455,7 +456,6 @@ if ($saveLocations.Count -gt 0) {
         entries      = @()
     }
 
-    $backedUp = 0
     foreach ($loc in $saveLocations) {
         $safeName = "save_$backedUp"
         $destFolder = Join-Path $backupDir $safeName
@@ -679,6 +679,38 @@ else {
     if ($luaFiles.Count -eq 0) {
         Write-Host "    [-] No .lua file found for AppID $AppID in stplug-in." -ForegroundColor Yellow
     }
+}
+
+Write-Host "`n[*] Validation scan summary:" -ForegroundColor Cyan
+if ($backedUp -gt 0) {
+    Write-Host "    [+] Save backup: $backedUp location(s) backed up to $backupDir" -ForegroundColor Green
+}
+else {
+    Write-Host "    [~] Save backup: no save files found" -ForegroundColor DarkGray
+}
+if ($reportData.HasGoldberg -or $reportData.GoldbergFiles.Count -gt 0) {
+    Write-Host "    [!] Goldberg/GBE files found: $($reportData.GoldbergFiles.Count) (warning only)" -ForegroundColor Yellow
+}
+else {
+    Write-Host "    [+] Goldberg/GBE files: none found" -ForegroundColor Green
+}
+if ($reportData.ConflictingFiles.Count -gt 0) {
+    Write-Host "    [-] Conflicting files found: $($reportData.ConflictingFiles.Count)" -ForegroundColor Red
+}
+else {
+    Write-Host "    [+] Conflicting files: none found" -ForegroundColor Green
+}
+if ($isUnreleased) {
+    Write-Host "    [~] Lua update/decryption check skipped for unreleased game" -ForegroundColor DarkGray
+}
+elseif (-not $reportData.LuaFileFound) {
+    Write-Host "    [!] Lua file: not found" -ForegroundColor Yellow
+}
+elseif ($reportData.UpdatesDisabled) {
+    Write-Host "    [+] Lua update/decryption lines: disabled" -ForegroundColor Green
+}
+else {
+    Write-Host "    [!] Lua update/decryption lines: manual attention needed" -ForegroundColor Yellow
 }
 
 # 7. System info collection
