@@ -517,7 +517,20 @@ Write-Host "[+] Exe files: $($exeFiles -join ', ')" -ForegroundColor Green
 
 # 5. Goldberg scan
 Write-Host "`n[*] Scanning for Goldberg Emulator files..." -ForegroundColor Cyan
-$goldbergIndicators = @("steam_settings", "steam_interfaces.txt", "coldclientloader.ini", "local_save.txt", "configs.user.ini")
+$goldbergIndicators = @(
+    "steam_settings",
+    "steam_interfaces.txt",
+    "coldclientloader.ini",
+    "local_save.txt",
+    "configs.user.ini",
+    "steam_appid.txt",
+    "account_name.txt",
+    "user_steam_id.txt",
+    "force_steamid.txt",
+    "force_account_name.txt",
+    "gbe.ini",
+    "goldberg.ini"
+)
 $foundGoldberg = $false
 
 foreach ($indicator in $goldbergIndicators) {
@@ -543,10 +556,11 @@ foreach ($dll in $steamDlls) {
 
 $reportData.HasGoldberg = $foundGoldberg
 if ($foundGoldberg) {
-    Write-Host "    [!] WARNING: Found Goldberg Emulator files:" -ForegroundColor Yellow
+    Write-Host "    [!] WARNING: Found Goldberg/GBE emulator files:" -ForegroundColor Yellow
     foreach ($f in $reportData.GoldbergFiles) {
         Write-Host "        - $f" -ForegroundColor Yellow
     }
+    Write-Host "    These are noted in the report, but validation will continue." -ForegroundColor Yellow
 }
 else {
     Write-Host "    [+] No obvious Goldberg files detected." -ForegroundColor Green
@@ -568,6 +582,8 @@ $conflictingNames = @(
     "steam_api_o.dll",
     "steam_api64_o.dll",
     "steamclient_loader.exe",
+    "steamclient.dll",
+    "steamclient64.dll",
     "codex.cfg",
     "codex64.dll",
     "3dmgame.dll",
