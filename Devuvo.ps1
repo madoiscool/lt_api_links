@@ -2,6 +2,10 @@
 if (-not $AppID -or [string]::IsNullOrWhiteSpace($AppID)) {
     $AppID = Read-Host "Enter Steam AppID"
 }
+if (-not $AppID -or [string]::IsNullOrWhiteSpace($AppID)) {
+    Write-Host "No AppID provided. Please run the full command from your ticket." -ForegroundColor Red
+    exit 1
+}
 
 # ========================
 # UNRELEASED GAME OVERRIDES
@@ -169,7 +173,7 @@ $libraries = @()
 
 if (Test-Path $libraryFoldersPath) {
     $content = Get-Content $libraryFoldersPath -Raw
-    $vdfMatches = [regex]::Matches($content, '"path"\s+"([^"]+)"')
+    $vdfMatches = [regex]::Matches($content, '\x22path\x22\s+\x22([^\x22]+)\x22')
     foreach ($match in $vdfMatches) {
         $libPath = $match.Groups[1].Value.Replace("\\", "\")
         $libraries += $libPath
@@ -200,8 +204,7 @@ if ($isUnreleased) {
                 $installDir = $candidate
                 Write-Host "[+] Found '$($meta.FolderName)' folder with '$($meta.MainExe)' at: $installDir" -ForegroundColor Green
                 break
-            }
-            else {
+            } else {
                 Write-Host "    [!] Folder '$candidate' exists but '$($meta.MainExe)' was not found inside. Skipping." -ForegroundColor Yellow
             }
         }
@@ -210,16 +213,15 @@ if ($isUnreleased) {
         Write-Host "[-] Could not find '$($meta.FolderName)' folder (with '$($meta.MainExe)') in any Steam library." -ForegroundColor Red
         Write-Host "    Make sure you have copied the game files into a Steam library under steamapps\common\$($meta.FolderName)" -ForegroundColor Yellow
     }
-}
-else {
+} else {
     # Normal released game: use appmanifest
     foreach ($lib in $libraries) {
         $manifestPath = Join-Path $lib "steamapps\appmanifest_$AppID.acf"
         if (Test-Path -LiteralPath $manifestPath) {
             $manifestContent = Get-Content -LiteralPath $manifestPath -Raw
 
-            $installDirNameMatch = [regex]::Match($manifestContent, '"installdir"\s+"([^"]+)"')
-            $nameMatch = [regex]::Match($manifestContent, '"name"\s+"([^"]+)"')
+            $installDirNameMatch = [regex]::Match($manifestContent, '\x22installdir\x22\s+\x22([^\x22]+)\x22')
+            $nameMatch = [regex]::Match($manifestContent, '\x22name\x22\s+\x22([^\x22]+)\x22')
 
             if ($installDirNameMatch.Success) {
                 $installDir = Join-Path $lib "steamapps\common\$($installDirNameMatch.Groups[1].Value)"
@@ -335,7 +337,7 @@ else {
     }
     catch {}
     if ($quickSize -eq 0) {
-        $issues += "Game folder is empty (0 bytes). The game files may not be fully copied."
+        $issues += 'Game folder is empty. The game files may not be fully copied.'
     }
 }
 if (-not $updateBlocked) {
@@ -465,24 +467,22 @@ if ($saveLocations.Count -gt 0) {
                     if (Test-Path $src) { Copy-Item -LiteralPath $src -Destination (Join-Path $destFolder $fileName) -Force }
                 }
                 $manifest.entries += @{ backup_folder = $safeName; original_path = $loc.Path; label = $loc.Label; files_only = $loc.FilesOnly }
-            }
-            else {
-                Copy-Item -Path "$($loc.Path)\*" -Destination $destFolder -Recurse -Force
+            } else {
+                $copySource = Join-Path $loc.Path '*'
+                Copy-Item -Path $copySource -Destination $destFolder -Recurse -Force
                 $manifest.entries += @{ backup_folder = $safeName; original_path = $loc.Path; label = $loc.Label; files_only = $null }
             }
             Write-Host "    [+] $($loc.Label)" -ForegroundColor Green
             $backedUp++
-        }
-        catch {
-            Write-Host "    [-] Failed: $($loc.Label) — $($_.Exception.Message)" -ForegroundColor Yellow
+        } catch {
+            Write-Host "    [-] Failed: $($loc.Label) - $($_.Exception.Message)" -ForegroundColor Yellow
         }
     }
 
     $manifest.entries = @($manifest.entries)
     $manifest | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $backupDir "backup_manifest.json") -Encoding UTF8
     Write-Host "    [+] Backed up $backedUp save location(s) to $backupDir" -ForegroundColor Green
-}
-else {
+} else {
     Write-Host "    [~] No save files found (first activation or saves stored elsewhere)" -ForegroundColor DarkGray
 }
 
@@ -502,12 +502,12 @@ try {
 catch {}
 $reportData.FolderSize = $folderSize
 $folderSizeGB = [math]::Round($folderSize / 1GB, 2)
-Write-Host "[+] Folder Size: $folderSizeGB GB ($folderSize bytes)" -ForegroundColor Green
+Write-Host ('[+] Folder Size: {0} GB, {1} bytes' -f $folderSizeGB, $folderSize) -ForegroundColor Green
 
 # Exe files in game folder (recursive)
 $exeFiles = @()
 try {
-    $exeFiles = @(Get-ChildItem -LiteralPath $installDir -Filter "*.exe" -Recurse -File -Force -ErrorAction Stop | Select-Object -ExpandProperty Name)
+    $exeFiles = @(Get-ChildItem -LiteralPath $installDir -Filter '*.exe' -Recurse -File -Force -ErrorAction Stop | Select-Object -ExpandProperty Name)
 }
 catch {
     Write-Host "    [!] Could not read exe files: $_" -ForegroundColor Yellow
