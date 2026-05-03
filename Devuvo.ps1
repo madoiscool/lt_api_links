@@ -758,6 +758,31 @@ try { $publicIp = (Invoke-RestMethod -Uri "https://api.ipify.org?format=json" -T
 $hwid = "$machineGuid|$diskSerial"
 
 
+# Final hard gate before upload. This prevents stale/partial scripts or skipped
+# branches from uploading reports with empty install data.
+$finalIssues = @()
+if (-not $reportData.Installed -or -not $installDir -or -not (Test-Path -LiteralPath $installDir)) {
+    $finalIssues += "Game install folder was not detected. Do not use this report code."
+}
+$finalFolderSize = 0
+try { $finalFolderSize = [int64]$reportData.FolderSize } catch { $finalFolderSize = 0 }
+if ($finalFolderSize -le 0) {
+    $finalIssues += "Game folder size is 0 bytes. The install detection failed or the folder is empty."
+}
+if (-not $reportData.WindowsUpdateBlocked) {
+    $finalIssues += "Windows Update is not blocked."
+}
+if ($finalIssues.Count -gt 0) {
+    Write-Host "`n[!] Report upload blocked because validation is incomplete:" -ForegroundColor Red
+    foreach ($issue in $finalIssues) {
+        Write-Host "    - $issue" -ForegroundColor Yellow
+    }
+    Write-Host "`nFix the issue above, then run the command again." -ForegroundColor Yellow
+    Write-Host "`nPress any key to exit..."
+    $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+    exit
+}
+
 # 8. Upload report
 Write-Host "`n[*] Uploading report to give report code..." -ForegroundColor Cyan
 
