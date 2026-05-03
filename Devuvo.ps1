@@ -166,10 +166,13 @@ Write-Host "[+] Steam found at: $steamPath" -ForegroundColor Green
 
 $libraryFoldersPath = Join-Path $steamPath "steamapps\libraryfolders.vdf"
 $libraries = @()
+$vdfPathPattern = '\x22path\x22\s+\x22([^\x22]+)\x22'
+$manifestInstallDirPattern = '\x22installdir\x22\s+\x22([^\x22]+)\x22'
+$manifestNamePattern = '\x22name\x22\s+\x22([^\x22]+)\x22'
 
 if (Test-Path $libraryFoldersPath) {
     $content = Get-Content $libraryFoldersPath -Raw
-    $vdfMatches = [regex]::Matches($content, '\x22path\x22\s+\x22([^\x22]+)\x22')
+    $vdfMatches = [regex]::Matches($content, $vdfPathPattern)
     foreach ($match in $vdfMatches) {
         $libPath = $match.Groups[1].Value.Replace("\\", "\")
         $libraries += $libPath
@@ -216,8 +219,8 @@ if ($isUnreleased) {
         if (Test-Path -LiteralPath $manifestPath) {
             $manifestContent = Get-Content -LiteralPath $manifestPath -Raw
 
-            $installDirNameMatch = [regex]::Match($manifestContent, '\x22installdir\x22\s+\x22([^\x22]+)\x22')
-            $nameMatch = [regex]::Match($manifestContent, '\x22name\x22\s+\x22([^\x22]+)\x22')
+            $installDirNameMatch = [regex]::Match($manifestContent, $manifestInstallDirPattern)
+            $nameMatch = [regex]::Match($manifestContent, $manifestNamePattern)
 
             if ($installDirNameMatch.Success) {
                 $installDir = Join-Path $lib "steamapps\common\$($installDirNameMatch.Groups[1].Value)"
