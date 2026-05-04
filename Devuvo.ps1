@@ -78,6 +78,10 @@ $customLaunchers = @{
     "3061810" = @{ Exe = "tokeer_launcher.exe"; GameName = "Like a Dragon: Pirate Yakuza in Hawaii" }
     # WWE 2K26 (Denuvo + tokeer)
     "3717070" = @{ Exe = "tokeer_launcher.exe"; GameName = "WWE 2K26" }
+    # Street Fighter™ 6 (Denuvo + tokeer)
+    "1364780" = @{ Exe = "tokeer_launcher.exe"; GameName = "Street Fighter™ 6" }
+    # F1® 25 (Denuvo + tokeer)
+    "3059520" = @{ Exe = "tokeer_launcher.exe"; GameName = "F1® 25" }
 
 
     
