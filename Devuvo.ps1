@@ -599,36 +599,76 @@ Write-Host "[+] Exe files: $($exeFiles -join ', ')" -ForegroundColor Green
 Write-Host "`n[*] Scanning for Goldberg Emulator files..." -ForegroundColor Cyan
 $goldbergIndicators = @("steam_settings", "steam_interfaces.txt", "coldclientloader.ini", "local_save.txt", "configs.user.ini")
 $foundGoldberg = $false
+$goldbergFoundPaths = @()
 
 foreach ($indicator in $goldbergIndicators) {
-    $found = Get-ChildItem -Path $installDir -Recurse -Filter $indicator -ErrorAction SilentlyContinue
+    $found = Get-ChildItem -LiteralPath $installDir -Recurse -Force -Filter $indicator -ErrorAction SilentlyContinue
     foreach ($match in $found) {
         $relativePath = $match.FullName.Substring($installDir.Length).TrimStart('\', '/')
         $foundGoldberg = $true
         $reportData.GoldbergFiles += $relativePath
+        $goldbergFoundPaths += $match.FullName
     }
 }
 
-$steamDlls = Get-ChildItem -Path $installDir -Recurse -Include "steam_api.dll", "steam_api64.dll" -ErrorAction SilentlyContinue
+$steamDlls = Get-ChildItem -LiteralPath $installDir -Recurse -Include "steam_api.dll", "steam_api64.dll" -ErrorAction SilentlyContinue
 foreach ($dll in $steamDlls) {
     try {
         $versionInfo = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($dll.FullName)
         if ($versionInfo.ProductName -match "Goldberg" -or $versionInfo.CompanyName -match "Goldberg" -or $versionInfo.FileDescription -match "Goldberg") {
             $foundGoldberg = $true
-            $reportData.GoldbergFiles += "$($dll.Name) (patched DLL)"
+            $relativePath = $dll.FullName.Substring($installDir.Length).TrimStart('\', '/')
+            $reportData.GoldbergFiles += "$relativePath (patched DLL)"
+            $goldbergFoundPaths += $dll.FullName
         }
     }
     catch {}
 }
 
-$reportData.HasGoldberg = $foundGoldberg
 if ($foundGoldberg) {
-    Write-Host "    [!] WARNING: Found Goldberg Emulator files:" -ForegroundColor Yellow
+    Write-Host "    [*] Found Goldberg Emulator files, auto-deleting..." -ForegroundColor Yellow
     foreach ($f in $reportData.GoldbergFiles) {
         Write-Host "        - $f" -ForegroundColor Yellow
     }
+
+    $deletedGoldberg = 0
+    $failedGoldberg = @()
+    $installRoot = (Resolve-Path -LiteralPath $installDir).Path.TrimEnd('\', '/')
+    $deleteTargets = $goldbergFoundPaths |
+        Select-Object -Unique |
+        Sort-Object { $_.Length } -Descending
+
+    foreach ($target in $deleteTargets) {
+        try {
+            if (-not (Test-Path -LiteralPath $target)) { continue }
+            $resolvedTarget = (Resolve-Path -LiteralPath $target).Path
+            if (-not ($resolvedTarget.StartsWith($installRoot + "\", [System.StringComparison]::OrdinalIgnoreCase))) {
+                $failedGoldberg += "$target (outside game folder)"
+                continue
+            }
+
+            Remove-Item -LiteralPath $resolvedTarget -Recurse -Force -ErrorAction Stop
+            $deletedGoldberg++
+        }
+        catch {
+            $failedGoldberg += "$target ($($_.Exception.Message))"
+        }
+    }
+
+    if ($deletedGoldberg -gt 0) {
+        Write-Host "    [+] Auto-deleted $deletedGoldberg Goldberg file/folder item(s)." -ForegroundColor Green
+    }
+    if ($failedGoldberg.Count -gt 0) {
+        Write-Host "    [!] Could not delete $($failedGoldberg.Count) Goldberg item(s):" -ForegroundColor Yellow
+        foreach ($failed in $failedGoldberg) {
+            Write-Host "        - $failed" -ForegroundColor Yellow
+        }
+    }
+
+    $reportData.HasGoldberg = $failedGoldberg.Count -gt 0
 }
 else {
+    $reportData.HasGoldberg = $false
     Write-Host "    [+] No obvious Goldberg files detected." -ForegroundColor Green
 }
 
