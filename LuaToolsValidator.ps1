@@ -11,7 +11,8 @@ if ((-not $LuaToolsInstallOnly) -and (-not $AppID -or [string]::IsNullOrWhiteSpa
 
 $ErrorActionPreference = "Continue"
 $tempRoot = Join-Path $env:TEMP "LuaToolsValidator"
-$installRoot = Join-Path $env:LOCALAPPDATA "LuaToolsValidator"
+$downloadsRoot = Join-Path ([Environment]::GetFolderPath("UserProfile")) "Downloads"
+$installRoot = Join-Path $downloadsRoot "LuaToolsValidator"
 $exePath = Join-Path $installRoot "LuaToolsValidator.exe"
 $downloadPath = Join-Path $tempRoot "LuaToolsValidator.latest.exe"
 New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
