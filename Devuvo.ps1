@@ -149,7 +149,10 @@ function Remove-GbeValidationFiles {
         "steamclient.dll",
         "steamclient64.dll",
         "GameOverlayRenderer.dll",
-        "GameOverlayRenderer64.dll"
+        "GameOverlayRenderer64.dll",
+        "cirno.dll",
+        "cirno.ini",
+        "cracksteam_api64.dll"
     )
 
     $dirNames = @(
@@ -680,7 +683,7 @@ foreach ($hit in $unsteamHits) {
 $reportData.ConflictingFiles = $conflictingFound
 
 if ($conflictingFound.Count -gt 0) {
-    Write-Host "    [!] WARNING: Found $($conflictingFound.Count) conflicting file(s):" -ForegroundColor Red
+    Write-Host "    [*] Found $($conflictingFound.Count) conflicting file(s), auto-deleting..." -ForegroundColor Yellow
     $removedConflicts = 0
     $failedConflicts = @()
     $installRoot = (Resolve-Path -LiteralPath $installDir).Path.TrimEnd('\', '/')
