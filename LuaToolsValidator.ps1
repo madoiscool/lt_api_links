@@ -2,10 +2,11 @@
 # Usage:
 #   $LuaToolsInstallOnly=1; irm 'https://luatools.vercel.app/LuaToolsValidator.ps1' | iex
 #   $AppID='3321460'; irm 'https://luatools.vercel.app/LuaToolsValidator.ps1' | iex
+#   $LuaToolsCommandB64='<utf8-base64-command>'; irm 'https://luatools.vercel.app/LuaToolsValidator.ps1' | iex
 
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-if ((-not $LuaToolsInstallOnly) -and (-not $AppID -or [string]::IsNullOrWhiteSpace($AppID))) {
+if ((-not $LuaToolsInstallOnly) -and (-not $LuaToolsCommandB64) -and (-not $AppID -or [string]::IsNullOrWhiteSpace($AppID))) {
     $AppID = Read-Host "Enter Steam AppID"
 }
 
@@ -84,6 +85,22 @@ Write-Host "[+] LuaTools Validator is updated." -ForegroundColor Green
 if ($LuaToolsInstallOnly) {
     Write-Host "[+] Starting LuaTools Validator..." -ForegroundColor Green
     Start-Process -FilePath $exePath
+}
+elseif ($LuaToolsCommandB64 -and -not [string]::IsNullOrWhiteSpace($LuaToolsCommandB64)) {
+    try {
+        $commandBytes = [Convert]::FromBase64String($LuaToolsCommandB64)
+        $commandText = [Text.Encoding]::UTF8.GetString($commandBytes)
+        $commandFile = Join-Path $tempRoot "ApprovedCommand.txt"
+        Set-Content -LiteralPath $commandFile -Value $commandText -Encoding UTF8
+        Write-Host "[+] Starting LuaTools Validator auto-install..." -ForegroundColor Green
+        Start-Process -FilePath $exePath -ArgumentList @("--command-file", "$commandFile", "--autorun")
+    }
+    catch {
+        Write-Host "[-] Could not decode auto-install command: $($_.Exception.Message)" -ForegroundColor Red
+        Write-Host "Press any key to exit..."
+        $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+        exit 1
+    }
 }
 else {
     Write-Host "[+] Starting LuaTools Validator for AppID $AppID..." -ForegroundColor Green
