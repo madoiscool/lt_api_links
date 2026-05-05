@@ -128,6 +128,78 @@ function Add-SteamCandidate {
     }
 }
 
+function Remove-GbeValidationFiles {
+    param([string]$GameDir)
+
+    if ([string]::IsNullOrWhiteSpace($GameDir) -or -not (Test-Path -LiteralPath $GameDir)) {
+        return
+    }
+
+    $root = (Resolve-Path -LiteralPath $GameDir).Path.TrimEnd('\', '/')
+    Write-Host "`n[*] Cleaning old GBE files before validation..." -ForegroundColor Cyan
+
+    $fileNames = @(
+        "coldloader.dll",
+        "coldloader.ini",
+        "coldclientloader.ini",
+        "mktl.ini",
+        "LUA.ini",
+        "steam_interfaces.txt",
+        "local_save.txt",
+        "steamclient.dll",
+        "steamclient64.dll",
+        "GameOverlayRenderer.dll",
+        "GameOverlayRenderer64.dll"
+    )
+
+    $dirNames = @(
+        "steam_settings"
+    )
+
+    $removed = 0
+    foreach ($name in $fileNames) {
+        $hits = Get-ChildItem -LiteralPath $root -Recurse -File -Force -Filter $name -ErrorAction SilentlyContinue
+        foreach ($hit in $hits) {
+            $full = $hit.FullName
+            if (-not ($full.StartsWith($root + "\", [System.StringComparison]::OrdinalIgnoreCase))) { continue }
+            try {
+                Remove-Item -LiteralPath $full -Force -ErrorAction Stop
+                $rel = $full.Substring($root.Length).TrimStart('\', '/')
+                Write-Host "    [-] Removed $rel" -ForegroundColor DarkGray
+                $removed++
+            }
+            catch {
+                Write-Host "    [!] Could not remove $($hit.FullName): $($_.Exception.Message)" -ForegroundColor Yellow
+            }
+        }
+    }
+
+    foreach ($name in $dirNames) {
+        $hits = Get-ChildItem -LiteralPath $root -Recurse -Directory -Force -Filter $name -ErrorAction SilentlyContinue |
+            Sort-Object { $_.FullName.Length } -Descending
+        foreach ($hit in $hits) {
+            $full = $hit.FullName
+            if (-not ($full.StartsWith($root + "\", [System.StringComparison]::OrdinalIgnoreCase))) { continue }
+            try {
+                Remove-Item -LiteralPath $full -Recurse -Force -ErrorAction Stop
+                $rel = $full.Substring($root.Length).TrimStart('\', '/')
+                Write-Host "    [-] Removed $rel" -ForegroundColor DarkGray
+                $removed++
+            }
+            catch {
+                Write-Host "    [!] Could not remove $($hit.FullName): $($_.Exception.Message)" -ForegroundColor Yellow
+            }
+        }
+    }
+
+    if ($removed -gt 0) {
+        Write-Host "    [+] Removed $removed old GBE file/folder item(s)." -ForegroundColor Green
+    }
+    else {
+        Write-Host "    [+] No old GBE files found." -ForegroundColor Green
+    }
+}
+
 $steamCandidates = [System.Collections.ArrayList]::new()
 
 # SteamExe should point to steam.exe, but some broken installs/registry states can
@@ -489,6 +561,8 @@ if ($saveLocations.Count -gt 0) {
     Write-Host "    [~] No save files found (first activation or saves stored elsewhere)" -ForegroundColor DarkGray
 }
 
+Remove-GbeValidationFiles -GameDir $installDir
+
 Write-Host "`nGenerating report..." -ForegroundColor Green
 
 # ---- Begin report generation ----
@@ -604,15 +678,42 @@ $reportData.ConflictingFiles = $conflictingFound
 
 if ($conflictingFound.Count -gt 0) {
     Write-Host "    [!] WARNING: Found $($conflictingFound.Count) conflicting file(s):" -ForegroundColor Red
+    $removedConflicts = 0
+    $failedConflicts = @()
+    $installRoot = (Resolve-Path -LiteralPath $installDir).Path.TrimEnd('\', '/')
+
     foreach ($cf in $conflictingFound) {
+        $target = Join-Path $installRoot $cf
         Write-Host "        - $cf" -ForegroundColor Yellow
+
+        try {
+            if (-not (Test-Path -LiteralPath $target)) { continue }
+
+            $resolvedTarget = (Resolve-Path -LiteralPath $target).Path
+            if (-not ($resolvedTarget.StartsWith($installRoot + "\", [System.StringComparison]::OrdinalIgnoreCase))) {
+                $failedConflicts += "$cf (outside game folder)"
+                continue
+            }
+
+            Remove-Item -LiteralPath $resolvedTarget -Recurse -Force -ErrorAction Stop
+            $removedConflicts++
+        }
+        catch {
+            $failedConflicts += "$cf ($($_.Exception.Message))"
+        }
     }
-    Write-Host ""
-    Write-Host "    Please DELETE the above files from your game folder and run this script again." -ForegroundColor Yellow
-    Write-Host "    These files conflict with the activation and must be removed first." -ForegroundColor Yellow
-    Write-Host "`nPress any key to exit..."
-    $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
-    exit
+
+    if ($removedConflicts -gt 0) {
+        Write-Host "    [+] Auto-deleted $removedConflicts conflicting file(s)." -ForegroundColor Green
+    }
+
+    if ($failedConflicts.Count -gt 0) {
+        Write-Host "    [!] Could not delete $($failedConflicts.Count) conflicting item(s):" -ForegroundColor Yellow
+        foreach ($failed in $failedConflicts) {
+            Write-Host "        - $failed" -ForegroundColor Yellow
+        }
+        Write-Host "    [!] Close the game/Steam or run as Administrator if a file is locked." -ForegroundColor Yellow
+    }
 }
 else {
     Write-Host "    [+] No conflicting files detected." -ForegroundColor Green
