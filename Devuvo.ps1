@@ -653,7 +653,10 @@ $conflictingNames = @(
     "hlm.ini",
     "denuvo.dll",
     "unsteam.ini",
-    "unsteam.dll"
+    "unsteam.dll",
+    "cirno.dll",
+    "cirno.ini",
+    "cracksteam_api64.dll"
 )
 
 $conflictingFound = @()
