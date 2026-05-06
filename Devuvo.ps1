@@ -70,8 +70,8 @@ $customLaunchers = @{
     "1971870" = @{ Exe = "tokeer_launcher.exe"; GameName = "Mortal Kombat 1" }
     # Persona 3 Reload (Denuvo + tokeer)
     "2161700" = @{ Exe = "tokeer_launcher.exe"; GameName = "Persona 3 Reload" }
-    # Like a Dragon Gaiden: The Man Who Erased His Name (Denuvo + tokeer)
-    "2375550" = @{ Exe = "tokeer_launcher.exe"; GameName = "Like a Dragon Gaiden: The Man Who Erased His Name" }
+    # Like a Dragon Gaiden: The Man Who Erased His Name (Denuvo + tokeer) — launcher lives in runtime\media
+    "2375550" = @{ Exe = "runtime\media\tokeer_launcher.exe"; GameName = "Like a Dragon Gaiden: The Man Who Erased His Name" }
     # SONIC X SHADOW GENERATIONS (Denuvo + tokeer)
     "2513280" = @{ Exe = "tokeer_launcher.exe"; GameName = "SONIC X SHADOW GENERATIONS" }
     # Like a Dragon: Pirate Yakuza in Hawaii (Denuvo + tokeer)
@@ -957,11 +957,13 @@ if ($customLaunchers.ContainsKey($AppID) -and $installDir -and $steamPath) {
     $cfg = $customLaunchers[$AppID]
     Write-Host "[*] Setting Steam launch options for $($cfg.GameName)..." -ForegroundColor Cyan
 
-    # Resolve the launcher exe path - prefer existing location (root then recursive),
+    # Resolve the launcher exe path - prefer existing location (configured path then recursive by filename),
     # otherwise default to "<installDir>\<Exe>" even if the exe isn't there yet.
+    # Exe can be either "tokeer_launcher.exe" or a relative path like "runtime\media\tokeer_launcher.exe".
     $launcherPath = Join-Path $installDir $cfg.Exe
     if (-not (Test-Path -LiteralPath $launcherPath)) {
-        $found = Get-ChildItem -Path $installDir -Filter $cfg.Exe -Recurse -File -ErrorAction SilentlyContinue | Select-Object -First 1
+        $exeBaseName = Split-Path -Leaf $cfg.Exe
+        $found = Get-ChildItem -Path $installDir -Filter $exeBaseName -Recurse -File -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($found) { $launcherPath = $found.FullName }
     }
 
