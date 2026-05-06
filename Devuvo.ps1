@@ -5,7 +5,7 @@ if (-not $AppID -or [string]::IsNullOrWhiteSpace($AppID)) {
 
 # ========================
 # UNRELEASED GAME OVERRIDES
-# Games not yet on Steam — detected by folder name instead of appmanifest
+# Games not yet on Steam - detected by folder name instead of appmanifest
 # Format: AppID -> @{ FolderName = "..."; GameName = "..."; MainExe = "..." }
 # ========================
 $unreleasedGames = @{}
@@ -78,10 +78,10 @@ $customLaunchers = @{
     "3061810" = @{ Exe = "tokeer_launcher.exe"; GameName = "Like a Dragon: Pirate Yakuza in Hawaii" }
     # WWE 2K26 (Denuvo + tokeer)
     "3717070" = @{ Exe = "tokeer_launcher.exe"; GameName = "WWE 2K26" }
-    # Street Fighter™ 6 (Denuvo + tokeer)
-    "1364780" = @{ Exe = "tokeer_launcher.exe"; GameName = "Street Fighter™ 6" }
-    # F1® 25 (Denuvo + tokeer)
-    "3059520" = @{ Exe = "tokeer_launcher.exe"; GameName = "F1® 25" }
+    # Street Fighter 6 (Denuvo + tokeer)
+    "1364780" = @{ Exe = "tokeer_launcher.exe"; GameName = "Street Fighter 6" }
+    # F1 25 (Denuvo + tokeer)
+    "3059520" = @{ Exe = "tokeer_launcher.exe"; GameName = "F1 25" }
 
 
     
@@ -269,12 +269,12 @@ $installDir = $null
 $gameName = $null
 
 if ($isUnreleased) {
-    # Unreleased game: no Steam manifest exists — search by folder name across all libraries
+    # Unreleased game: no Steam manifest exists - search by folder name across all libraries
     $meta = $unreleasedGames[$AppID]
     $gameName = $meta.GameName
-    Write-Host "[*] '$gameName' is an unreleased game — searching by folder name '$($meta.FolderName)'..." -ForegroundColor Cyan
+    Write-Host "[*] '$gameName' is an unreleased game - searching by folder name '$($meta.FolderName)'..." -ForegroundColor Cyan
     foreach ($lib in $libraries) {
-        $candidate = Join-Path $lib "steamapps\common\$($meta.FolderName)"
+        $candidate = [System.IO.Path]::Combine($lib, "steamapps\common\$($meta.FolderName)")
         if (Test-Path $candidate) {
             # Verify the main executable exists inside
             $exeHit = Get-ChildItem -Path $candidate -Filter $meta.MainExe -Recurse -File -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -294,7 +294,7 @@ if ($isUnreleased) {
 } else {
     # Normal released game: use appmanifest
     foreach ($lib in $libraries) {
-        $manifestPath = Join-Path $lib "steamapps\appmanifest_$AppID.acf"
+        $manifestPath = [System.IO.Path]::Combine($lib, "steamapps\appmanifest_$AppID.acf")
         if (Test-Path -LiteralPath $manifestPath) {
             $manifestContent = Get-Content -LiteralPath $manifestPath -Raw
 
@@ -302,7 +302,7 @@ if ($isUnreleased) {
             $nameMatch = [regex]::Match($manifestContent, $manifestNamePattern)
 
             if ($installDirNameMatch.Success) {
-                $installDir = Join-Path $lib "steamapps\common\$($installDirNameMatch.Groups[1].Value)"
+                $installDir = [System.IO.Path]::Combine($lib, "steamapps\common\$($installDirNameMatch.Groups[1].Value)")
                 if ($nameMatch.Success) {
                     $gameName = $nameMatch.Groups[1].Value
                 }
@@ -767,7 +767,7 @@ else {
 
 # 6. stplug-in lua modification
 if ($isUnreleased) {
-    # Unreleased game — no AppID registered in SteamTools yet, skip lua check
+    # Unreleased game - no AppID registered in SteamTools yet, skip lua check
     Write-Host "`n[*] Skipping stplug-in lua check (game is not yet released on Steam)." -ForegroundColor DarkGray
     $luaFiles = @()
 }
@@ -912,7 +912,7 @@ try {
         Write-Host "`n    [+] Report uploaded successfully!" -ForegroundColor Green
 
         # For games that need launch options written, defer the D-Report code display
-        # until AFTER Steam restart — prevents users from closing the script early
+        # until AFTER Steam restart - prevents users from closing the script early
         # and skipping the launch options write.
         $deferCodeDisplay = $customLaunchers.ContainsKey($AppID)
 
@@ -957,7 +957,7 @@ if ($customLaunchers.ContainsKey($AppID) -and $installDir -and $steamPath) {
     $cfg = $customLaunchers[$AppID]
     Write-Host "[*] Setting Steam launch options for $($cfg.GameName)..." -ForegroundColor Cyan
 
-    # Resolve the launcher exe path — prefer existing location (root then recursive),
+    # Resolve the launcher exe path - prefer existing location (root then recursive),
     # otherwise default to "<installDir>\<Exe>" even if the exe isn't there yet.
     $launcherPath = Join-Path $installDir $cfg.Exe
     if (-not (Test-Path -LiteralPath $launcherPath)) {
@@ -1014,7 +1014,7 @@ if ($customLaunchers.ContainsKey($AppID) -and $installDir -and $steamPath) {
                         $writtenCount++
                     }
                     else {
-                        # AppID entry doesn't exist yet — inject a minimal block into "apps"
+                        # AppID entry doesn't exist yet - inject a minimal block into "apps"
                         $appsMatch = [regex]::Match($vdfContent, '"apps"\s*\{')
                         if ($appsMatch.Success) {
                             $insertPos = $appsMatch.Index + $appsMatch.Length
