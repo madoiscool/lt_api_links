@@ -75,7 +75,7 @@ $customLaunchers = @{
     # SONIC X SHADOW GENERATIONS (Denuvo + tokeer)
     "2513280" = @{ Exe = "tokeer_launcher.exe"; GameName = "SONIC X SHADOW GENERATIONS" }
     # Like a Dragon: Pirate Yakuza in Hawaii (Denuvo + tokeer)
-    "3061810" = @{ Exe = "tokeer_launcher.exe"; GameName = "Like a Dragon: Pirate Yakuza in Hawaii" }
+    "3061810" = @{ Exe = "runtime\media\tokeer_launcher.exe"; GameName = "Like a Dragon: Pirate Yakuza in Hawaii" }
     # WWE 2K26 (Denuvo + tokeer)
     "3717070" = @{ Exe = "tokeer_launcher.exe"; GameName = "WWE 2K26" }
     # Street Fighter 6 (Denuvo + tokeer)
