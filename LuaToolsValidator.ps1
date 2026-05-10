@@ -81,11 +81,52 @@ Remove-Item -LiteralPath $downloadPath -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath (Join-Path $env:TEMP "LuaToolsValidator\LuaToolsValidator.exe") -Force -ErrorAction SilentlyContinue
 
 Write-Host "[+] LuaTools Validator is updated." -ForegroundColor Green
+Unblock-File -LiteralPath $exePath -ErrorAction SilentlyContinue
+
+function Start-LuaToolsValidator {
+    param(
+        [string]$FilePath,
+        [string[]]$ArgumentList = @()
+    )
+
+    try {
+        $startInfo = @{
+            FilePath = $FilePath
+            WorkingDirectory = (Split-Path -Parent $FilePath)
+            WindowStyle = "Normal"
+            PassThru = $true
+            ErrorAction = "Stop"
+        }
+        if ($ArgumentList.Count -gt 0) {
+            $startInfo.ArgumentList = $ArgumentList
+        }
+
+        $proc = Start-Process @startInfo
+        Start-Sleep -Seconds 2
+
+        if ($proc.HasExited) {
+            Write-Host "[-] LuaTools Validator closed immediately. Exit code: $($proc.ExitCode)" -ForegroundColor Red
+            Write-Host "    Try running this file manually to see the Windows error:" -ForegroundColor Yellow
+            Write-Host "    $FilePath" -ForegroundColor Yellow
+            Write-Host "Press any key to exit..."
+            $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+            exit 1
+        }
+    }
+    catch {
+        Write-Host "[-] Failed to start LuaTools Validator: $($_.Exception.Message)" -ForegroundColor Red
+        Write-Host "    File: $FilePath" -ForegroundColor Yellow
+        Write-Host "Press any key to exit..."
+        $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+        exit 1
+    }
+}
+
 if ($LuaToolsInstallOnly) {
     Write-Host "[+] Starting LuaTools Validator..." -ForegroundColor Green
-    Start-Process -FilePath $exePath
+    Start-LuaToolsValidator -FilePath $exePath
 }
 else {
     Write-Host "[+] Starting LuaTools Validator for AppID $AppID..." -ForegroundColor Green
-    Start-Process -FilePath $exePath -ArgumentList @("--appid", "$AppID", "--autorun")
+    Start-LuaToolsValidator -FilePath $exePath -ArgumentList @("--appid", "$AppID", "--autorun")
 }
