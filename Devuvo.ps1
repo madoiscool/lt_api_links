@@ -816,13 +816,84 @@ else {
 }
 
 # 7. System info collection
+function Get-PrimaryGpuInfo {
+    $controllers = @()
+    try {
+        $controllers = @(Get-CimInstance -ClassName Win32_VideoController -ErrorAction Stop |
+            Where-Object { $_.Name -and ($_.Name -notmatch 'Microsoft Basic|Remote Display|Parsec|Virtual|VMware|Hyper-V') })
+    }
+    catch {}
+
+    $registryAdapters = @()
+    try {
+        $displayClass = "HKLM:\SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}"
+        $registryAdapters = @(Get-ChildItem -LiteralPath $displayClass -ErrorAction Stop |
+            Where-Object { $_.PSChildName -match '^\d{4}$' } |
+            ForEach-Object {
+                $props = Get-ItemProperty -LiteralPath $_.PSPath -ErrorAction SilentlyContinue
+                if (-not $props) { return }
+
+                $name = $props.DriverDesc
+                if ([string]::IsNullOrWhiteSpace($name)) { $name = $props.'HardwareInformation.AdapterString' }
+                if ([string]::IsNullOrWhiteSpace($name)) { return }
+
+                $memoryBytes = 0L
+                $qwMemory = $props.'HardwareInformation.qwMemorySize'
+                if ($qwMemory -is [byte[]] -and $qwMemory.Length -ge 8) {
+                    $memoryBytes = [BitConverter]::ToInt64($qwMemory, 0)
+                }
+                elseif ($qwMemory) {
+                    try { $memoryBytes = [int64]$qwMemory } catch {}
+                }
+
+                if ($memoryBytes -le 0 -and $props.'HardwareInformation.MemorySize') {
+                    try { $memoryBytes = [uint64]$props.'HardwareInformation.MemorySize' } catch {}
+                }
+
+                [pscustomobject]@{
+                    Name        = $name.Trim()
+                    MemoryBytes = [int64]$memoryBytes
+                }
+            } |
+            Where-Object { $_.MemoryBytes -gt 0 } |
+            Sort-Object MemoryBytes -Descending)
+    }
+    catch {}
+
+    if ($registryAdapters.Count -gt 0) {
+        $best = $registryAdapters | Select-Object -First 1
+        return [pscustomobject]@{
+            Name   = $best.Name
+            VramGB = [math]::Round($best.MemoryBytes / 1GB, 1)
+        }
+    }
+
+    $gpu = $controllers |
+        Where-Object { $_.AdapterRAM -gt 0 } |
+        Sort-Object AdapterRAM -Descending |
+        Select-Object -First 1
+
+    if ($gpu) {
+        return [pscustomobject]@{
+            Name   = $gpu.Name.Trim()
+            VramGB = [math]::Round($gpu.AdapterRAM / 1GB, 1)
+        }
+    }
+
+    return [pscustomobject]@{
+        Name   = "Unknown"
+        VramGB = 0
+    }
+}
+
 $cpuName = "Unknown"
 try { $cpuName = (Get-CimInstance -ClassName Win32_Processor -ErrorAction Stop | Select-Object -First 1).Name.Trim() } catch {}
 $gpuName = "Unknown"
 $gpuVram = 0
 try {
-    $gpu = Get-CimInstance -ClassName Win32_VideoController -ErrorAction Stop | Where-Object { $_.AdapterRAM -gt 0 } | Sort-Object AdapterRAM -Descending | Select-Object -First 1
-    if ($gpu) { $gpuName = $gpu.Name.Trim(); $gpuVram = [math]::Round($gpu.AdapterRAM / 1GB, 1) }
+    $gpuInfo = Get-PrimaryGpuInfo
+    $gpuName = $gpuInfo.Name
+    $gpuVram = $gpuInfo.VramGB
 }
 catch {}
 $ramGB = 0
