@@ -314,9 +314,42 @@ if ($isUnreleased) {
             break
         }
     }
+
     if (-not $installDir) {
-        Write-Host "[-] Could not find '$($meta.MainExe)' inside any Steam library common folder." -ForegroundColor Red
-        Write-Host "    Make sure the clean game files are placed under any folder inside steamapps\common." -ForegroundColor Yellow
+        Write-Host "[*] '$($meta.MainExe)' was not found in Steam libraries. Searching fixed drives outside Steam too..." -ForegroundColor Cyan
+
+        $driveRoots = @()
+        try {
+            $driveRoots = [System.IO.DriveInfo]::GetDrives() |
+                Where-Object { $_.DriveType -eq [System.IO.DriveType]::Fixed -and $_.IsReady } |
+                ForEach-Object { $_.RootDirectory.FullName }
+        }
+        catch {
+            $driveRoots = Get-PSDrive -PSProvider FileSystem -ErrorAction SilentlyContinue |
+                ForEach-Object { $_.Root }
+        }
+
+        foreach ($root in $driveRoots) {
+            if ([string]::IsNullOrWhiteSpace($root) -or -not (Test-Path -LiteralPath $root)) {
+                continue
+            }
+
+            Write-Host "    [*] Scanning $root for $($meta.MainExe)..." -ForegroundColor DarkGray
+            $exeHit = Get-ChildItem -LiteralPath $root -Filter $meta.MainExe -Recurse -File -ErrorAction SilentlyContinue |
+                Select-Object -First 1
+
+            if ($exeHit) {
+                $installDir = $exeHit.Directory.FullName
+                Write-Host "[+] Found '$($meta.MainExe)' outside Steam at: $($exeHit.FullName)" -ForegroundColor Green
+                Write-Host "[+] Using install directory: $installDir" -ForegroundColor Green
+                break
+            }
+        }
+    }
+
+    if (-not $installDir) {
+        Write-Host "[-] Could not find '$($meta.MainExe)' in Steam libraries or any fixed drive." -ForegroundColor Red
+        Write-Host "    Make sure the clean game files are extracted and the main exe exists on this PC." -ForegroundColor Yellow
     }
 } else {
     # Normal released game: use appmanifest
@@ -429,7 +462,7 @@ $issues = @()
 if (-not $gameInstalled) {
     if ($isUnreleased) {
         $meta = $unreleasedGames[$AppID]
-        $issues += "Could not find '$($meta.MainExe)' inside any Steam library common folder. Make sure the clean game files are placed under any folder inside steamapps\common."
+        $issues += "Could not find '$($meta.MainExe)' in Steam libraries or any fixed drive. Make sure the clean game files are extracted and the main exe exists on this PC."
     }
     else {
         $issues += "Game with AppID $AppID is not installed. Please install it first."
