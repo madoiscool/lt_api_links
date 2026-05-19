@@ -8,7 +8,9 @@ if (-not $AppID -or [string]::IsNullOrWhiteSpace($AppID)) {
 # Games not yet on Steam - detected by folder name instead of appmanifest
 # Format: AppID -> @{ FolderName = "..."; GameName = "..."; MainExe = "..." }
 # ========================
-$unreleasedGames = @{}
+$unreleasedGames = @{
+    "2215200" = @{ FolderName = "LEGO Batman Legacy of the Dark Knight"; GameName = "LEGO Batman: Legacy of the Dark Knight"; MainExe = "LEGOBatmanLotDK.exe" }
+}
 $isUnreleased = $unreleasedGames.ContainsKey($AppID)
 
 # ========================
