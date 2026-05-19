@@ -273,27 +273,50 @@ $installDir = $null
 $gameName = $null
 
 if ($isUnreleased) {
-    # Unreleased game: no Steam manifest exists - search by folder name across all libraries
+    # Unreleased game: no Steam manifest exists - search every Steam common folder
     $meta = $unreleasedGames[$AppID]
     $gameName = $meta.GameName
-    Write-Host "[*] '$gameName' is an unreleased game - searching by folder name '$($meta.FolderName)'..." -ForegroundColor Cyan
+    Write-Host "[*] '$gameName' is an unreleased game - searching Steam libraries for '$($meta.MainExe)'..." -ForegroundColor Cyan
     foreach ($lib in $libraries) {
-        $candidate = [System.IO.Path]::Combine($lib, "steamapps\common\$($meta.FolderName)")
-        if (Test-Path $candidate) {
-            # Verify the main executable exists inside
-            $exeHit = Get-ChildItem -Path $candidate -Filter $meta.MainExe -Recurse -File -ErrorAction SilentlyContinue | Select-Object -First 1
+        $commonDir = [System.IO.Path]::Combine($lib, "steamapps\common")
+        if (-not (Test-Path -LiteralPath $commonDir)) {
+            continue
+        }
+
+        $candidate = [System.IO.Path]::Combine($commonDir, $meta.FolderName)
+        if (Test-Path -LiteralPath $candidate) {
+            $exeHit = Get-ChildItem -LiteralPath $candidate -Filter $meta.MainExe -Recurse -File -ErrorAction SilentlyContinue | Select-Object -First 1
             if ($exeHit) {
                 $installDir = $candidate
                 Write-Host "[+] Found '$($meta.FolderName)' folder with '$($meta.MainExe)' at: $installDir" -ForegroundColor Green
                 break
-            } else {
+            }
+            else {
                 Write-Host "    [!] Folder '$candidate' exists but '$($meta.MainExe)' was not found inside. Skipping." -ForegroundColor Yellow
             }
         }
+
+        $folders = Get-ChildItem -LiteralPath $commonDir -Directory -ErrorAction SilentlyContinue
+        foreach ($folder in $folders) {
+            if ($folder.FullName -ieq $candidate) {
+                continue
+            }
+
+            $exeHit = Get-ChildItem -LiteralPath $folder.FullName -Filter $meta.MainExe -Recurse -File -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($exeHit) {
+                $installDir = $folder.FullName
+                Write-Host "[+] Found '$($meta.MainExe)' inside clean files folder: $installDir" -ForegroundColor Green
+                break
+            }
+        }
+
+        if ($installDir) {
+            break
+        }
     }
     if (-not $installDir) {
-        Write-Host "[-] Could not find '$($meta.FolderName)' folder (with '$($meta.MainExe)') in any Steam library." -ForegroundColor Red
-        Write-Host "    Make sure you have copied the game files into a Steam library under steamapps\common\$($meta.FolderName)" -ForegroundColor Yellow
+        Write-Host "[-] Could not find '$($meta.MainExe)' inside any Steam library common folder." -ForegroundColor Red
+        Write-Host "    Make sure the clean game files are placed under any folder inside steamapps\common." -ForegroundColor Yellow
     }
 } else {
     # Normal released game: use appmanifest
@@ -406,7 +429,7 @@ $issues = @()
 if (-not $gameInstalled) {
     if ($isUnreleased) {
         $meta = $unreleasedGames[$AppID]
-        $issues += "Could not find the '$($meta.FolderName)' game folder (with '$($meta.MainExe)') in any Steam library. Make sure the game files are placed under steamapps\common\$($meta.FolderName)."
+        $issues += "Could not find '$($meta.MainExe)' inside any Steam library common folder. Make sure the clean game files are placed under any folder inside steamapps\common."
     }
     else {
         $issues += "Game with AppID $AppID is not installed. Please install it first."
