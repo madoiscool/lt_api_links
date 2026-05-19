@@ -72,8 +72,6 @@ $customLaunchers = @{
     "1971870" = @{ Exe = "tokeer_launcher.exe"; GameName = "Mortal Kombat 1" }
     # Persona 3 Reload (Denuvo + tokeer)
     "2161700" = @{ Exe = "tokeer_launcher.exe"; GameName = "Persona 3 Reload" }
-    # LEGO Batman: Legacy of the Dark Knight (Denuvo + tokeer)
-    "2215200" = @{ Exe = "tokeer_launcher.exe"; GameName = "LEGO Batman: Legacy of the Dark Knight" }
     # Like a Dragon Gaiden: The Man Who Erased His Name (Denuvo + tokeer) — launcher lives in runtime\media
     "2375550" = @{ Exe = "runtime\media\tokeer_launcher.exe"; GameName = "Like a Dragon Gaiden: The Man Who Erased His Name" }
     # SONIC X SHADOW GENERATIONS (Denuvo + tokeer)
@@ -1045,7 +1043,7 @@ try {
         # For games that need launch options written, defer the D-Report code display
         # until AFTER Steam restart - prevents users from closing the script early
         # and skipping the launch options write.
-        $deferCodeDisplay = $customLaunchers.ContainsKey($AppID)
+        $deferCodeDisplay = $customLaunchers.ContainsKey($AppID) -and -not $isUnreleased
 
         if (-not $deferCodeDisplay) {
             Write-Host ""
@@ -1076,15 +1074,20 @@ catch {
 }
 
 # 8. Restart Steam
-Write-Host "`nPress any key to restart Steam..." -ForegroundColor Yellow
+if ($customLaunchers.ContainsKey($AppID) -and -not $isUnreleased) {
+    Write-Host "`nPress any key to restart Steam and set launch options..." -ForegroundColor Yellow
+}
+else {
+    Write-Host "`nPress any key to continue..." -ForegroundColor Yellow
+}
 $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
 
-Write-Host "`nRestarting Steam..." -ForegroundColor Cyan
-Stop-Process -Name "steam" -Force -ErrorAction SilentlyContinue
-Start-Sleep -Seconds 2
-
 # --- Set custom launch options (Steam must be closed for this to persist) ---
-if ($customLaunchers.ContainsKey($AppID) -and $installDir -and $steamPath) {
+if ($customLaunchers.ContainsKey($AppID) -and -not $isUnreleased -and $installDir -and $steamPath) {
+    Write-Host "`nRestarting Steam..." -ForegroundColor Cyan
+    Stop-Process -Name "steam" -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 2
+
     $cfg = $customLaunchers[$AppID]
     Write-Host "[*] Setting Steam launch options for $($cfg.GameName)..." -ForegroundColor Cyan
 
@@ -1172,13 +1175,15 @@ if ($customLaunchers.ContainsKey($AppID) -and $installDir -and $steamPath) {
     else {
         Write-Host "    [-] Could not update any Steam config file." -ForegroundColor Yellow
     }
+    if ($steamPath) {
+        Start-Process -FilePath (Join-Path $steamPath "steam.exe")
+    }
+    else {
+        Write-Host "[-] Could not find Steam executable to restart." -ForegroundColor Red
+    }
 }
-
-if ($steamPath) {
-    Start-Process -FilePath (Join-Path $steamPath "steam.exe")
-}
-else {
-    Write-Host "[-] Could not find Steam executable to restart." -ForegroundColor Red
+elseif ($isUnreleased) {
+    Write-Host "`n[*] Skipping Steam launch options/restart for unreleased game AppID $AppID." -ForegroundColor DarkGray
 }
 
 # Deferred D-Report code display (for games where launch options were set)
