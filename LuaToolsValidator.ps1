@@ -29,7 +29,11 @@ foreach ($url in $validatorUrls) {
     try {
         Write-Host "[*] Downloading latest LuaTools Validator..." -ForegroundColor Cyan
         Write-Host "    $url" -ForegroundColor DarkGray
-        Invoke-WebRequest -Uri $url -OutFile $downloadPath -UseBasicParsing -TimeoutSec 25 -ErrorAction Stop
+        $headers = @{
+            "Cache-Control" = "no-cache"
+            "Pragma"        = "no-cache"
+        }
+        Invoke-WebRequest -Uri $url -OutFile $downloadPath -UseBasicParsing -Headers $headers -TimeoutSec 25 -ErrorAction Stop
 
         if ((Test-Path -LiteralPath $downloadPath) -and ((Get-Item -LiteralPath $downloadPath).Length -gt 100KB)) {
             $downloaded = $true

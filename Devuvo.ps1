@@ -944,6 +944,89 @@ function Get-PrimaryGpuInfo {
     }
 }
 
+function Remove-SteamLaunchOptionsForApp {
+    param(
+        [string]$SteamPath,
+        [string]$TargetAppID
+    )
+
+    if ([string]::IsNullOrWhiteSpace($SteamPath) -or [string]::IsNullOrWhiteSpace($TargetAppID)) {
+        return
+    }
+
+    $userdataPath = Join-Path $SteamPath "userdata"
+    if (-not (Test-Path -LiteralPath $userdataPath)) {
+        return
+    }
+
+    $configFiles = @()
+    $userDirs = @(Get-ChildItem -LiteralPath $userdataPath -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^\d+$' -and $_.Name -ne '0' })
+    foreach ($userDir in $userDirs) {
+        foreach ($configName in @("localconfig.vdf", "sharedconfig.vdf")) {
+            $vdfPath = Join-Path $userDir.FullName "config\$configName"
+            if (Test-Path -LiteralPath $vdfPath) {
+                $configFiles += $vdfPath
+            }
+        }
+    }
+
+    $pending = @()
+    foreach ($vdfPath in $configFiles) {
+        try {
+            $vdfContent = Get-Content -LiteralPath $vdfPath -Raw -Encoding UTF8
+            $blockOpen = [regex]::Match($vdfContent, '"' + [regex]::Escape($TargetAppID) + '"\s*\{')
+            if (-not $blockOpen.Success) { continue }
+
+            $startIdx = $blockOpen.Index + $blockOpen.Length
+            $depth = 1
+            $i = $startIdx
+            while ($i -lt $vdfContent.Length -and $depth -gt 0) {
+                $c = $vdfContent[$i]
+                if ($c -eq '{') { $depth++ }
+                elseif ($c -eq '}') { $depth-- }
+                $i++
+            }
+            $endIdx = $i - 1
+            if ($endIdx -le $startIdx) { continue }
+
+            $blockBody = $vdfContent.Substring($startIdx, $endIdx - $startIdx)
+            $loPattern = '(?m)^[\t ]*"LaunchOptions"[\t ]+"(?:[^"\\]|\\.)*"[\t ]*\r?\n?'
+            if (-not [regex]::IsMatch($blockBody, $loPattern)) { continue }
+
+            $newBody = [regex]::Replace($blockBody, $loPattern, "", 1)
+            $newContent = $vdfContent.Substring(0, $startIdx) + $newBody + $vdfContent.Substring($endIdx)
+            $pending += @{ Path = $vdfPath; Content = $newContent }
+        }
+        catch {
+            Write-Host "    [!] Could not inspect $vdfPath`: $($_.Exception.Message)" -ForegroundColor Yellow
+        }
+    }
+
+    if ($pending.Count -eq 0) {
+        Write-Host "    [+] No old Steam LaunchOptions found for AppID $TargetAppID." -ForegroundColor DarkGray
+        return
+    }
+
+    Write-Host "    [*] Found old Steam LaunchOptions for unreleased AppID $TargetAppID. Clearing them..." -ForegroundColor Cyan
+    Stop-Process -Name "steam" -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 2
+
+    $cleared = 0
+    foreach ($item in $pending) {
+        try {
+            Set-Content -LiteralPath $item.Path -Value $item.Content -Encoding UTF8 -NoNewline
+            $cleared++
+        }
+        catch {
+            Write-Host "    [!] Could not update $($item.Path): $($_.Exception.Message)" -ForegroundColor Yellow
+        }
+    }
+
+    if ($cleared -gt 0) {
+        Write-Host "    [+] Cleared old Steam LaunchOptions from $cleared config file(s)." -ForegroundColor Green
+    }
+}
+
 $cpuName = "Unknown"
 try { $cpuName = (Get-CimInstance -ClassName Win32_Processor -ErrorAction Stop | Select-Object -First 1).Name.Trim() } catch {}
 $gpuName = "Unknown"
@@ -1184,6 +1267,8 @@ if ($customLaunchers.ContainsKey($AppID) -and -not $isUnreleased -and $installDi
 }
 elseif ($isUnreleased) {
     Write-Host "`n[*] Skipping Steam launch options/restart for unreleased game AppID $AppID." -ForegroundColor DarkGray
+    Write-Host "[*] Checking for old Steam LaunchOptions written by older validators..." -ForegroundColor Cyan
+    Remove-SteamLaunchOptionsForApp -SteamPath $steamPath -TargetAppID $AppID
 }
 
 # Deferred D-Report code display (for games where launch options were set)
