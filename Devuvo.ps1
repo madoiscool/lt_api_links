@@ -8,9 +8,7 @@ if (-not $AppID -or [string]::IsNullOrWhiteSpace($AppID)) {
 # Games not yet on Steam - detected by folder name instead of appmanifest
 # Format: AppID -> @{ FolderName = "..."; GameName = "..."; MainExe = "..." }
 # ========================
-$unreleasedGames = @{
-    "2215200" = @{ FolderName = "LEGO Batman Legacy of the Dark Knight"; GameName = "LEGO Batman: Legacy of the Dark Knight"; MainExe = "LEGOBatmanLotDK.exe" }
-}
+$unreleasedGames = @{}
 $isUnreleased = $unreleasedGames.ContainsKey($AppID)
 
 # ========================
@@ -72,6 +70,8 @@ $customLaunchers = @{
     "1971870" = @{ Exe = "tokeer_launcher.exe"; GameName = "Mortal Kombat 1" }
     # Persona 3 Reload (Denuvo + tokeer)
     "2161700" = @{ Exe = "tokeer_launcher.exe"; GameName = "Persona 3 Reload" }
+    # LEGO Batman: Legacy of the Dark Knight (Denuvo + tokeer)
+    "2215200" = @{ Exe = "tokeer_launcher.exe"; GameName = "LEGO Batman: Legacy of the Dark Knight" }
     # Like a Dragon Gaiden: The Man Who Erased His Name (Denuvo + tokeer) — launcher lives in runtime\media
     "2375550" = @{ Exe = "runtime\media\tokeer_launcher.exe"; GameName = "Like a Dragon Gaiden: The Man Who Erased His Name" }
     # SONIC X SHADOW GENERATIONS (Denuvo + tokeer)
