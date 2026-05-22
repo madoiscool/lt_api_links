@@ -87,6 +87,55 @@ Remove-Item -LiteralPath (Join-Path $env:TEMP "LuaToolsValidator\LuaToolsValidat
 Write-Host "[+] LuaTools Validator is updated." -ForegroundColor Green
 Unblock-File -LiteralPath $exePath -ErrorAction SilentlyContinue
 
+function Test-DotNet10DesktopRuntime {
+    try {
+        $runtimes = & dotnet --list-runtimes 2>$null
+        return [bool]($runtimes | Where-Object { $_ -match '^Microsoft\.WindowsDesktop\.App\s+10\.' })
+    }
+    catch {
+        return $false
+    }
+}
+
+function Install-DotNet10DesktopRuntime {
+    if (Test-DotNet10DesktopRuntime) {
+        Write-Host "[+] .NET 10 Desktop Runtime is already installed." -ForegroundColor Green
+        return $true
+    }
+
+    Write-Host "[*] .NET 10 Desktop Runtime is missing. Installing it now..." -ForegroundColor Cyan
+    try {
+        $winget = Get-Command winget -ErrorAction SilentlyContinue
+        if (-not $winget) {
+            throw "winget is not available"
+        }
+
+        & winget install --id Microsoft.DotNet.DesktopRuntime.10 -e --accept-package-agreements --accept-source-agreements --silent
+        if ($LASTEXITCODE -ne 0) {
+            throw "winget exited with code $LASTEXITCODE"
+        }
+    }
+    catch {
+        Write-Host "[-] Could not auto-install .NET 10 Desktop Runtime: $($_.Exception.Message)" -ForegroundColor Red
+        Write-Host "    Install it manually, then run this command again:" -ForegroundColor Yellow
+        Write-Host "    https://dotnet.microsoft.com/en-us/download/dotnet/10.0" -ForegroundColor Yellow
+        Write-Host "Press any key to exit..."
+        $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+        exit 1
+    }
+
+    if (Test-DotNet10DesktopRuntime) {
+        Write-Host "[+] .NET 10 Desktop Runtime installed successfully." -ForegroundColor Green
+        return $true
+    }
+
+    Write-Host "[-] .NET 10 Desktop Runtime was installed but is not visible yet." -ForegroundColor Red
+    Write-Host "    Restart PowerShell or Windows, then run this command again." -ForegroundColor Yellow
+    Write-Host "Press any key to exit..."
+    $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+    exit 1
+}
+
 function Start-LuaToolsValidator {
     param(
         [string]$FilePath,
@@ -125,6 +174,8 @@ function Start-LuaToolsValidator {
         exit 1
     }
 }
+
+Install-DotNet10DesktopRuntime | Out-Null
 
 if ($LuaToolsInstallOnly) {
     Write-Host "[+] Starting LuaTools Validator..." -ForegroundColor Green
