@@ -143,12 +143,21 @@ function Start-LuaToolsValidator {
     )
 
     try {
+        $resolvedFile = Resolve-Path -LiteralPath $FilePath -ErrorAction Stop
+        $resolvedFilePath = $resolvedFile.ProviderPath
+        $workingDir = Split-Path -Parent $resolvedFilePath
+        if ([string]::IsNullOrWhiteSpace($workingDir) -or -not (Test-Path -LiteralPath $workingDir -PathType Container)) {
+            $workingDir = $PWD.ProviderPath
+        }
+
         $startInfo = @{
-            FilePath = $FilePath
-            WorkingDirectory = (Split-Path -Parent $FilePath)
+            FilePath = $resolvedFilePath
             WindowStyle = "Normal"
             PassThru = $true
             ErrorAction = "Stop"
+        }
+        if (-not [string]::IsNullOrWhiteSpace($workingDir) -and (Test-Path -LiteralPath $workingDir -PathType Container)) {
+            $startInfo.WorkingDirectory = $workingDir
         }
         if ($ArgumentList.Count -gt 0) {
             $startInfo.ArgumentList = $ArgumentList
