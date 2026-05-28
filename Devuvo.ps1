@@ -1208,9 +1208,21 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
 
 # --- Set custom launch options (Steam must be closed for this to persist) ---
 if ($customLaunchers.ContainsKey($AppID) -and -not $isUnreleased -and $installDir -and $steamPath) {
-    Write-Host "`nRestarting Steam..." -ForegroundColor Cyan
-    Stop-Process -Name "steam" -Force -ErrorAction SilentlyContinue
-    Start-Sleep -Seconds 2
+    Write-Host "`nClosing Steam to write launch options..." -ForegroundColor Cyan
+    # Steam caches config in memory and rewrites localconfig.vdf on exit. If we
+    # touch the VDF while Steam is still alive, our change is either blocked by a
+    # file lock or overwritten by Steam's flush-on-exit. So kill steam.exe AND
+    # steamwebhelper, then POLL until the process is actually gone (up to 20s)
+    # instead of a fixed 2s guess that's too short on slow machines.
+    foreach ($procName in @("steam", "steamwebhelper")) {
+        Stop-Process -Name $procName -Force -ErrorAction SilentlyContinue
+    }
+    $steamDeadline = (Get-Date).AddSeconds(20)
+    while ((Get-Process -Name "steam" -ErrorAction SilentlyContinue) -and (Get-Date) -lt $steamDeadline) {
+        Start-Sleep -Milliseconds 500
+    }
+    # Extra grace so the OS releases the file handles before we write.
+    Start-Sleep -Seconds 1
 
     $cfg = $customLaunchers[$AppID]
     Write-Host "[*] Setting Steam launch options for $($cfg.GameName)..." -ForegroundColor Cyan
@@ -1270,7 +1282,12 @@ if ($customLaunchers.ContainsKey($AppID) -and -not $isUnreleased -and $installDi
                         }
 
                         $newContent = $vdfContent.Substring(0, $startIdx) + $newBody + $vdfContent.Substring($endIdx)
-                        Set-Content -LiteralPath $vdfPath -Value $newContent -Encoding UTF8 -NoNewline
+                        # Write UTF-8 WITHOUT BOM. Windows PowerShell 5.1's
+                        # Set-Content -Encoding UTF8 prepends a BOM, which Steam's
+                        # VDF parser rejects -> it resets the config and the launch
+                        # option vanishes. .NET WriteAllText with UTF8Encoding($false)
+                        # guarantees no BOM on every PowerShell version.
+                        [System.IO.File]::WriteAllText($vdfPath, $newContent, (New-Object System.Text.UTF8Encoding($false)))
                         $writtenCount++
                     }
                     else {
@@ -1280,7 +1297,9 @@ if ($customLaunchers.ContainsKey($AppID) -and -not $isUnreleased -and $installDi
                             $insertPos = $appsMatch.Index + $appsMatch.Length
                             $inject = "`r`n`t`t`t`t`"$AppID`"`r`n`t`t`t`t{`r`n`t`t`t`t`t$newValue`r`n`t`t`t`t}"
                             $newContent = $vdfContent.Substring(0, $insertPos) + $inject + $vdfContent.Substring($insertPos)
-                            Set-Content -LiteralPath $vdfPath -Value $newContent -Encoding UTF8 -NoNewline
+                            # UTF-8 without BOM (see note above) — Set-Content would
+                            # add a BOM on PowerShell 5.1 and break the config.
+                            [System.IO.File]::WriteAllText($vdfPath, $newContent, (New-Object System.Text.UTF8Encoding($false)))
                             $writtenCount++
                         }
                     }
@@ -1292,12 +1311,40 @@ if ($customLaunchers.ContainsKey($AppID) -and -not $isUnreleased -and $installDi
         }
     }
 
-    if ($writtenCount -gt 0) {
-        Write-Host "    [+] Launch options written to $writtenCount config file(s) (local + shared)." -ForegroundColor Green
+    # Verify the option actually landed in at least one file by re-reading,
+    # so a silent failure is visible instead of a false "success".
+    $verifiedCount = 0
+    if (Test-Path $userdataPath) {
+        foreach ($userDir in $userDirs) {
+            foreach ($configName in $configFiles) {
+                $vdfPath = Join-Path $userDir.FullName "config\$configName"
+                if (-not (Test-Path -LiteralPath $vdfPath)) { continue }
+                try {
+                    $check = [System.IO.File]::ReadAllText($vdfPath)
+                    if ($check.Contains([System.IO.Path]::GetFileName($launcherPath))) {
+                        $verifiedCount++
+                    }
+                }
+                catch {}
+            }
+        }
+    }
+
+    if ($verifiedCount -gt 0) {
+        Write-Host "    [+] Launch options set and verified in $verifiedCount config file(s)." -ForegroundColor Green
         Write-Host "        $launchOptionString" -ForegroundColor DarkGray
+    }
+    elseif ($writtenCount -gt 0) {
+        Write-Host "    [!] Wrote launch options to $writtenCount file(s) but could not verify them on re-read." -ForegroundColor Yellow
+        Write-Host "        If the game does not auto-launch the activator, set it manually in Steam:" -ForegroundColor Yellow
+        Write-Host "        Right-click the game -> Properties -> Launch Options -> paste:" -ForegroundColor Yellow
+        Write-Host "        $launchOptionString" -ForegroundColor Cyan
     }
     else {
         Write-Host "    [-] Could not update any Steam config file." -ForegroundColor Yellow
+        Write-Host "        Set it manually in Steam: Right-click the game -> Properties ->" -ForegroundColor Yellow
+        Write-Host "        Launch Options -> paste:" -ForegroundColor Yellow
+        Write-Host "        $launchOptionString" -ForegroundColor Cyan
     }
     if ($steamPath) {
         Start-Process -FilePath (Join-Path $steamPath "steam.exe")
