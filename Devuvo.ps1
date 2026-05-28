@@ -457,6 +457,45 @@ if ($gameInstalled -and $AppID -in $defenderExcludedAppIDs) {
     }
 }
 
+# 3.6 Smart App Control (SAC) — detect only.
+# SAC (Windows 11 22H2+) blocks unsigned/low-reputation executables like
+# tokeer_launcher.exe. We only detect it here and tell the user to turn it
+# off themselves, then re-run — we do not touch it automatically.
+Write-Host "`n[*] Checking Smart App Control status..." -ForegroundColor Cyan
+$sacPolicyKey = "HKLM:\SYSTEM\CurrentControlSet\Control\CI\Policy"
+$sacValueName = "VerifiedAndReputablePolicyState"
+$sacState = $null
+try {
+    $sacState = (Get-ItemProperty -Path $sacPolicyKey -Name $sacValueName -ErrorAction Stop).$sacValueName
+}
+catch {
+    # Key/value missing = SAC not present on this build (older Win10, etc.)
+    $sacState = 0
+}
+
+# 0 = Off, 1 = Enforced (On), 2 = Evaluation. Anything non-zero blocks us.
+if ($sacState -and $sacState -ne 0) {
+    $sacLabel = if ($sacState -eq 1) { "ON (enforced)" } elseif ($sacState -eq 2) { "Evaluation mode" } else { "Active (state=$sacState)" }
+    Write-Host "    [!] Smart App Control is $sacLabel — it will block tokeer_launcher.exe." -ForegroundColor Yellow
+
+    Write-Host "`n========================================================" -ForegroundColor Red
+    Write-Host " SMART APP CONTROL MUST BE OFF BEFORE ACTIVATION" -ForegroundColor Red
+    Write-Host "========================================================" -ForegroundColor Red
+    Write-Host " Turn it off, then run this validation again:" -ForegroundColor White
+    Write-Host ""
+    Write-Host "   1. Open Windows Security" -ForegroundColor Yellow
+    Write-Host "   2. App & browser control -> Smart App Control settings" -ForegroundColor Yellow
+    Write-Host "   3. Set it to OFF" -ForegroundColor Yellow
+    Write-Host "   4. Run this validation code again" -ForegroundColor Yellow
+    Write-Host "========================================================" -ForegroundColor Red
+    Write-Host "`nPress any key to exit..."
+    $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+    exit
+}
+else {
+    Write-Host "    [+] Smart App Control is OFF or not present." -ForegroundColor Green
+}
+
 # 5. Gate check - stop if something is wrong
 $issues = @()
 if (-not $gameInstalled) {
