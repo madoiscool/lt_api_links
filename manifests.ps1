@@ -43,7 +43,7 @@ function Write-Header {
     # Clickable hyperlinks using ANSI escape sequences (works in Windows Terminal)
     $esc = [char]27
     if ($Mode -eq "github+morrenus") {
-        $sourceLink = "$esc]8;;https://manifest.morrenus.xyz/$esc\Morrenus$esc]8;;$esc\"
+        $sourceLink = "$esc]8;;https://hubcapmanifest.com/$esc\Morrenus$esc]8;;$esc\"
         $sourcePad  = "          "
     } elseif ($Mode -eq "github+manifesthub") {
         $sourceLink = "$esc]8;;https://github.com/SteamAutoCracks/ManifestHub$esc\ManifestHub$esc]8;;$esc\"
@@ -252,7 +252,7 @@ function Download-Manifest {
     if ($githubResult.Is404 -and $Mode -ne "github") {
         if ($Mode -eq "github+morrenus") {
             Write-Host "      Not on GitHub, trying Morrenus..." -ForegroundColor DarkGray
-            $secondaryUrl = "https://manifest.morrenus.xyz/api/v1/generate/manifest?depot_id=${DepotId}&manifest_id=${ManifestId}&api_key=${ApiKey}"
+            $secondaryUrl = "https://hubcapmanifest.com/api/v1/generate/manifest?depot_id=${DepotId}&manifest_id=${ManifestId}&api_key=${ApiKey}"
             $secondaryLabel = "Morrenus"
         } else {
             Write-Host "      Not on GitHub, trying ManifestHub..." -ForegroundColor DarkGray
@@ -296,7 +296,7 @@ if ($env:MANIFEST_MODE) {
     Write-Host "  Select download mode:" -ForegroundColor Cyan
     Write-Host ""
     Write-Host "    1. Github Mirror    (No Key Required, Try This First!)" -ForegroundColor White
-    Write-Host "    2. Morrenus         (Free Key from https://manifest.morrenus.xyz/)" -ForegroundColor White
+    Write-Host "    2. Morrenus         (Free Key from https://hubcapmanifest.com/)" -ForegroundColor White
     Write-Host "    3. ManifestHub      (Free Key from https://manifesthub1.filegear-sg.me/)" -ForegroundColor White
     Write-Host ""
     do {
@@ -322,8 +322,8 @@ if ($resolvedMode -eq "github") {
     if (-not $activeApiKey) {
         Write-Host ""
         Write-Host "  How to get your Morrenus API key:" -ForegroundColor DarkGray
-        Write-Host "    1. Login at https://manifest.morrenus.xyz/ with your Discord account" -ForegroundColor DarkGray
-        Write-Host "    2. Generate your key at https://manifest.morrenus.xyz/api-keys/user" -ForegroundColor DarkGray
+        Write-Host "    1. Login at https://hubcapmanifest.com/ with your Discord account" -ForegroundColor DarkGray
+        Write-Host "    2. Generate your key at https://hubcapmanifest.com/api-keys/user" -ForegroundColor DarkGray
         Write-Host "    3. Or get it from LuaTools plugin settings if you set it there" -ForegroundColor DarkGray
         Write-Host ""
         $activeApiKey = Read-Host "  Enter Morrenus API Key"
@@ -342,7 +342,7 @@ if ($resolvedMode -eq "github") {
     Write-Host ""
     Write-Status "Validating Morrenus API key..."
     try {
-        $statsResponse = Invoke-RestMethod -Uri "https://manifest.morrenus.xyz/api/v1/user/stats?api_key=$activeApiKey" -Method Get -TimeoutSec 15 -ErrorAction Stop
+        $statsResponse = Invoke-RestMethod -Uri "https://hubcapmanifest.com/api/v1/user/stats?api_key=$activeApiKey" -Method Get -TimeoutSec 15 -ErrorAction Stop
         if (-not $statsResponse.can_make_requests) {
             Write-ErrorMsg "Your Morrenus key has hit its daily limit ($($statsResponse.daily_usage)/$($statsResponse.daily_limit)). Try again tomorrow."
             Exit-WithPrompt
