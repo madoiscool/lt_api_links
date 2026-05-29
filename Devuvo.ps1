@@ -1197,19 +1197,70 @@ catch {
     Write-Host "    [-] Failed to upload report: $($_.Exception.Message)" -ForegroundColor Red
 }
 
+function Get-SteamUpdateStatus {
+    param([string]$SteamPath)
+    # Reads steam.cfg and reports whether Steam client auto-updates are allowed.
+    # BootStrapperInhibitAll=Enable hard-blocks the client from updating, which
+    # also breaks CloudRedirect (it needs an up-to-date Steam).
+    $cfg = Join-Path $SteamPath "steam.cfg"
+    if (Test-Path $cfg) {
+        $content = Get-Content -LiteralPath $cfg -Raw -ErrorAction SilentlyContinue
+        if ($content -match "(?im)^\s*BootStrapperInhibitAll\s*=\s*Enable") {
+            return "disabled"
+        }
+    }
+    return "enabled"
+}
+
 function Invoke-CloudRedirectStFixer {
+    param([string]$SteamPath)
     # CLI equivalent of CloudRedirect GUI -> Setup -> "Run All Patches".
     # Patches the SteamTools payload so games work even when ST's payload
     # server is down (the "no internet connection / update queue" error). The
     # CLI finds Steam, shuts it down itself, downloads ST core DLLs if missing,
     # applies the STFixer patches, deploys cloud_redirect.dll, and enables
-    # auto-update. Idempotent, so it's safe to run on every validation.
-    Write-Host "`n[*] Applying SteamTools payload fix (CloudRedirect STFixer)..." -ForegroundColor Cyan
+    # auto-update.
+    Write-Host "`n[*] Checking SteamTools payload fix (CloudRedirect)..." -ForegroundColor Cyan
 
     $isAdminCR = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
     if (-not $isAdminCR) {
         Write-Host "    [-] Not running as Administrator — cannot patch SteamTools. Re-run as admin." -ForegroundColor Yellow
         return $false
+    }
+
+    # --- Report Steam auto-update status (from steam.cfg) ---
+    $updStatus = Get-SteamUpdateStatus -SteamPath $SteamPath
+    if ($updStatus -eq "disabled") {
+        Write-Host "    [!] Steam auto-updates are OFF (steam.cfg has BootStrapperInhibitAll=Enable)." -ForegroundColor Yellow
+        Write-Host "        The SteamTools fix needs an up-to-date Steam, so updates should be ON." -ForegroundColor Yellow
+    }
+    else {
+        Write-Host "    [+] Steam auto-updates are ON." -ForegroundColor Green
+    }
+
+    # --- Skip if already applied for THIS Steam build ---
+    # The fix is keyed to the Steam client version: steam.exe changes (new
+    # LastWriteTime) whenever Steam updates, which is exactly when the payload
+    # patch must be re-applied. If cloud_redirect.dll is present AND our marker
+    # matches the current steam.exe, the patch is already in place — skip the
+    # download + re-patch + Steam shutdown entirely so it doesn't run on every
+    # single validation.
+    $crDll = Join-Path $SteamPath "cloud_redirect.dll"
+    $steamExe = Join-Path $SteamPath "steam.exe"
+    $markerDir = Join-Path $env:LOCALAPPDATA "LuaToolsValidator"
+    $marker = Join-Path $markerDir "cloudredirect_patched.marker"
+    $currentSig = if (Test-Path $steamExe) { (Get-Item $steamExe).LastWriteTimeUtc.Ticks.ToString() } else { "" }
+
+    if ((Test-Path $crDll) -and (Test-Path $marker) -and $currentSig) {
+        $markedSig = (Get-Content -LiteralPath $marker -Raw -ErrorAction SilentlyContinue).Trim()
+        if ($markedSig -eq $currentSig) {
+            Write-Host "    [+] SteamTools payload fix already applied for this Steam build — skipping." -ForegroundColor Green
+            return $true
+        }
+        Write-Host "    [*] Steam was updated since the last patch — re-applying fix..." -ForegroundColor Cyan
+    }
+    else {
+        Write-Host "    [*] No prior patch detected — applying SteamTools payload fix..." -ForegroundColor Cyan
     }
 
     $crExe = Join-Path $env:TEMP "CloudRedirectCLI.exe"
@@ -1235,13 +1286,44 @@ function Invoke-CloudRedirectStFixer {
 
     try {
         # /stfixer shuts Steam down itself before patching, so it's fine that
-        # the launch-options step below also expects Steam closed.
-        $proc = Start-Process -FilePath $crExe -ArgumentList "/stfixer" -Wait -PassThru -NoNewWindow
-        if ($proc.ExitCode -eq 0) {
+        # the launch-options step below also expects Steam closed. Capture the
+        # output (while still showing it) so we can detect specific failures
+        # like an unsupported Steam version and give the user a clear next step.
+        $crOutput = (& $crExe "/stfixer" 2>&1 | Tee-Object -Variable _crLines | Out-String)
+        $exitCode = $LASTEXITCODE
+
+        if ($exitCode -eq 0) {
             Write-Host "    [+] SteamTools payload fix applied." -ForegroundColor Green
+            # Record the Steam build we patched so future runs can skip.
+            try {
+                New-Item -ItemType Directory -Force -Path $markerDir | Out-Null
+                if ($currentSig) {
+                    Set-Content -LiteralPath $marker -Value $currentSig -NoNewline -Encoding ASCII
+                }
+            }
+            catch {}
             return $true
         }
-        Write-Host "    [-] CloudRedirect STFixer exited with code $($proc.ExitCode)." -ForegroundColor Yellow
+
+        # Steam too old/new for CloudRedirect — the user just needs to update Steam.
+        if ($crOutput -match "version .* is not supported" -or $crOutput -match "not supported") {
+            Write-Host "`n    ============================================" -ForegroundColor Red
+            Write-Host "     YOUR STEAM IS OUT OF DATE" -ForegroundColor Red
+            Write-Host "    ============================================" -ForegroundColor Red
+            Write-Host "     The SteamTools fix needs an up-to-date Steam." -ForegroundColor White
+            if ($updStatus -eq "disabled") {
+                Write-Host "     Your Steam auto-updates are currently OFF (steam.cfg)." -ForegroundColor White
+                Write-Host "     Turn updates back on so Steam can update:" -ForegroundColor White
+            }
+            Write-Host "       1. Open Steam and let it fully update" -ForegroundColor Yellow
+            Write-Host "          (Steam -> top-left -> Check for Steam Client Updates)" -ForegroundColor Yellow
+            Write-Host "       2. Fully close Steam once it finishes updating" -ForegroundColor Yellow
+            Write-Host "       3. Run this validation again" -ForegroundColor Yellow
+            Write-Host "    ============================================" -ForegroundColor Red
+            return $false
+        }
+
+        Write-Host "    [-] CloudRedirect STFixer exited with code $exitCode." -ForegroundColor Yellow
         return $false
     }
     catch {
@@ -1259,10 +1341,13 @@ else {
 }
 $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
 
-# Apply the SteamTools payload fix. This closes Steam (the CLI does it itself),
-# so it runs before the launch-options write, which also needs Steam closed —
-# one shutdown covers both, and Steam is restarted afterward.
-Invoke-CloudRedirectStFixer | Out-Null
+# Apply the SteamTools payload fix. Skips automatically if already applied for
+# the current Steam build. When it does run it closes Steam (the CLI does it
+# itself), so it's before the launch-options write, which also needs Steam
+# closed — one shutdown covers both, and Steam is restarted afterward.
+if ($steamPath) {
+    Invoke-CloudRedirectStFixer -SteamPath $steamPath | Out-Null
+}
 
 # --- Set custom launch options (Steam must be closed for this to persist) ---
 if ($customLaunchers.ContainsKey($AppID) -and -not $isUnreleased -and $installDir -and $steamPath) {
