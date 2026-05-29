@@ -252,6 +252,17 @@ $libraries = @()
 $vdfPathPattern = '\x22path\x22\s+\x22([^\x22]+)\x22'
 $manifestInstallDirPattern = '\x22installdir\x22\s+\x22([^\x22]+)\x22'
 $manifestNamePattern = '\x22name\x22\s+\x22([^\x22]+)\x22'
+$manifestStateFlagsPattern = '\x22StateFlags\x22\s+\x22(\d+)\x22'
+$manifestBytesToDownloadPattern = '\x22BytesToDownload\x22\s+\x22(\d+)\x22'
+$manifestBytesDownloadedPattern = '\x22BytesDownloaded\x22\s+\x22(\d+)\x22'
+
+# Steam appmanifest install-state, parsed from the matched manifest below.
+# Defaults (-1 / 0) mean "unknown", which makes the install-progress gate skip
+# itself when we can't read them (e.g. unreleased games found by folder instead
+# of an appmanifest).
+$appStateFlags = -1
+$bytesToDownload = 0
+$bytesDownloaded = 0
 
 if (Test-Path $libraryFoldersPath) {
     $content = Get-Content $libraryFoldersPath -Raw
@@ -366,6 +377,16 @@ if ($isUnreleased) {
                 if ($nameMatch.Success) {
                     $gameName = $nameMatch.Groups[1].Value
                 }
+
+                # Capture install state from this manifest so the gate below can
+                # refuse to validate a game Steam is still downloading/updating.
+                $stateFlagsMatch = [regex]::Match($manifestContent, $manifestStateFlagsPattern)
+                if ($stateFlagsMatch.Success) { $appStateFlags = [int64]$stateFlagsMatch.Groups[1].Value }
+                $btdMatch = [regex]::Match($manifestContent, $manifestBytesToDownloadPattern)
+                if ($btdMatch.Success) { $bytesToDownload = [int64]$btdMatch.Groups[1].Value }
+                $bdMatch = [regex]::Match($manifestContent, $manifestBytesDownloadedPattern)
+                if ($bdMatch.Success) { $bytesDownloaded = [int64]$bdMatch.Groups[1].Value }
+
                 break
             }
         }
@@ -515,6 +536,35 @@ else {
     catch {}
     if ($quickSize -eq 0) {
         $issues += 'Game folder is empty (0 bytes). The game files may not be fully copied.'
+    }
+
+    # Block validation while Steam is still downloading/installing/updating.
+    # $gameInstalled is true the instant the install folder exists, which is the
+    # moment a download STARTS — so without this gate a D-Report code gets
+    # generated for a half-downloaded game. The appmanifest StateFlags + byte
+    # counters tell us whether the game is actually FULLY installed. Only
+    # released games with a parsed manifest are gated; unreleased games (no
+    # manifest, $appStateFlags stays -1) keep their folder-based behaviour.
+    if (-not $isUnreleased -and $appStateFlags -ge 0) {
+        $STATE_FULLY_INSTALLED = 4
+        # Any of these StateFlags bits means Steam is mid download/update/
+        # validate/stage — i.e. the game is NOT ready to validate:
+        #   2 UpdateRequired      32 FilesMissing      128 FilesCorrupt
+        #   256 UpdateRunning     512 UpdatePaused     1024 UpdateStarted
+        #   65536 Reconfiguring   131072 Validating    262144 AddingFiles
+        #   524288 Preallocating  1048576 Downloading  2097152 Staging
+        #   4194304 Committing    8388608 UpdateStopping
+        $STATE_BUSY_MASK = 2 -bor 32 -bor 128 -bor 256 -bor 512 -bor 1024 -bor 65536 -bor 131072 -bor 262144 -bor 524288 -bor 1048576 -bor 2097152 -bor 4194304 -bor 8388608
+        $bytesComplete = ($bytesToDownload -le 0) -or ($bytesDownloaded -ge $bytesToDownload)
+        $installComplete = (($appStateFlags -band $STATE_FULLY_INSTALLED) -ne 0) -and (($appStateFlags -band $STATE_BUSY_MASK) -eq 0) -and $bytesComplete
+        if (-not $installComplete) {
+            $progressText = ''
+            if ($bytesToDownload -gt 0 -and $bytesDownloaded -lt $bytesToDownload) {
+                $pct = [int][math]::Floor(($bytesDownloaded / $bytesToDownload) * 100)
+                $progressText = " (about $pct% downloaded)"
+            }
+            $issues += "Game with AppID $AppID is still downloading/installing/updating in Steam$progressText. Wait until Steam shows it as fully installed (not 'Queued', 'Downloading', or 'Updating'), then run the validation again."
+        }
     }
 }
 if (-not $updateBlocked) {
