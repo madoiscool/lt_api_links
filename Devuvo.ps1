@@ -1197,6 +1197,59 @@ catch {
     Write-Host "    [-] Failed to upload report: $($_.Exception.Message)" -ForegroundColor Red
 }
 
+function Invoke-CloudRedirectStFixer {
+    # CLI equivalent of CloudRedirect GUI -> Setup -> "Run All Patches".
+    # Patches the SteamTools payload so games work even when ST's payload
+    # server is down (the "no internet connection / update queue" error). The
+    # CLI finds Steam, shuts it down itself, downloads ST core DLLs if missing,
+    # applies the STFixer patches, deploys cloud_redirect.dll, and enables
+    # auto-update. Idempotent, so it's safe to run on every validation.
+    Write-Host "`n[*] Applying SteamTools payload fix (CloudRedirect STFixer)..." -ForegroundColor Cyan
+
+    $isAdminCR = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    if (-not $isAdminCR) {
+        Write-Host "    [-] Not running as Administrator — cannot patch SteamTools. Re-run as admin." -ForegroundColor Yellow
+        return $false
+    }
+
+    $crExe = Join-Path $env:TEMP "CloudRedirectCLI.exe"
+    $crUrls = @(
+        "https://github.com/Selectively11/CloudRedirect/releases/latest/download/CloudRedirectCLI.exe"
+    )
+    $downloaded = $false
+    foreach ($url in $crUrls) {
+        try {
+            Write-Host "    [*] Downloading CloudRedirect CLI..." -ForegroundColor DarkGray
+            Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $crExe -TimeoutSec 120 -ErrorAction Stop
+            $downloaded = $true
+            break
+        }
+        catch {
+            Write-Host "    [-] Download failed: $($_.Exception.Message)" -ForegroundColor Yellow
+        }
+    }
+    if (-not $downloaded -or -not (Test-Path $crExe)) {
+        Write-Host "    [-] Could not download CloudRedirect CLI; skipping payload fix." -ForegroundColor Red
+        return $false
+    }
+
+    try {
+        # /stfixer shuts Steam down itself before patching, so it's fine that
+        # the launch-options step below also expects Steam closed.
+        $proc = Start-Process -FilePath $crExe -ArgumentList "/stfixer" -Wait -PassThru -NoNewWindow
+        if ($proc.ExitCode -eq 0) {
+            Write-Host "    [+] SteamTools payload fix applied." -ForegroundColor Green
+            return $true
+        }
+        Write-Host "    [-] CloudRedirect STFixer exited with code $($proc.ExitCode)." -ForegroundColor Yellow
+        return $false
+    }
+    catch {
+        Write-Host "    [-] Failed to run CloudRedirect STFixer: $($_.Exception.Message)" -ForegroundColor Red
+        return $false
+    }
+}
+
 # 8. Restart Steam
 if ($customLaunchers.ContainsKey($AppID) -and -not $isUnreleased) {
     Write-Host "`nPress any key to restart Steam and set launch options..." -ForegroundColor Yellow
@@ -1205,6 +1258,11 @@ else {
     Write-Host "`nPress any key to continue..." -ForegroundColor Yellow
 }
 $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+
+# Apply the SteamTools payload fix. This closes Steam (the CLI does it itself),
+# so it runs before the launch-options write, which also needs Steam closed —
+# one shutdown covers both, and Steam is restarted afterward.
+Invoke-CloudRedirectStFixer | Out-Null
 
 # --- Set custom launch options (Steam must be closed for this to persist) ---
 if ($customLaunchers.ContainsKey($AppID) -and -not $isUnreleased -and $installDir -and $steamPath) {
@@ -1357,6 +1415,18 @@ elseif ($isUnreleased) {
     Write-Host "`n[*] Skipping Steam launch options/restart for unreleased game AppID $AppID." -ForegroundColor DarkGray
     Write-Host "[*] Checking for old Steam LaunchOptions written by older validators..." -ForegroundColor Cyan
     Remove-SteamLaunchOptionsForApp -SteamPath $steamPath -TargetAppID $AppID
+}
+
+# The CloudRedirect STFixer step closes Steam to patch the payload. For games
+# that don't go through the launch-options block above (non-custom-launcher or
+# unreleased), nothing restarts Steam — so bring it back here if it's down, so
+# the patched payload loads and the user can launch normally.
+if ($steamPath -and -not (Get-Process -Name "steam" -ErrorAction SilentlyContinue)) {
+    $steamExe = Join-Path $steamPath "steam.exe"
+    if (Test-Path $steamExe) {
+        Write-Host "`n[*] Restarting Steam to load the patched payload..." -ForegroundColor Cyan
+        Start-Process -FilePath $steamExe
+    }
 }
 
 # Deferred D-Report code display (for games where launch options were set)
