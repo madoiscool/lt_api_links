@@ -562,9 +562,8 @@ function Main {
     $millenniumWasInstalled = Test-Millennium $steamPath
     if ($millenniumWasInstalled) {
         Write-Log -Type INFO -Message $L["MillenniumAlready"]
-    } else {
-        Install-Millennium $steamPath
     }
+    Install-Millennium $steamPath
 
     Install-Plugin $steamPath $Script:Name $Script:Link
 
