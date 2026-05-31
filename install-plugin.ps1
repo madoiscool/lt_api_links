@@ -366,21 +366,6 @@ function Test-Millennium {
 function Install-Millennium {
     param([string]$SteamPath)
 
-    Write-Log -Type ERR -Message $L["MillenniumNotFound"]
-
-    for ($i = $MillenniumTimer; $i -ge 0; $i--) {
-        $keyAvailable = $false
-        try { $keyAvailable = [Console]::KeyAvailable } catch {}
-        if ($keyAvailable) {
-            Write-Host
-            Write-Log -Type ERR -Message $L["MillenniumCancelled"]
-            throw $L["MillenniumCancelled"]
-        }
-        Write-Log -Type LOG -Message ($L["MillenniumCountdown"] -f $i) -NoNewline
-        Start-Sleep -Seconds 1
-    }
-    Write-Host
-
     Write-Log -Type INFO -Message $L["MillenniumInstalling"]
     $msUrls = @(
         "https://github.com/madoiscool/lt_api_links/raw/refs/heads/main/millennium-py.ps1",
