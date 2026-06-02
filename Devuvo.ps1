@@ -3,6 +3,41 @@ if (-not $AppID -or [string]::IsNullOrWhiteSpace($AppID)) {
     $AppID = Read-Host "Enter Steam AppID"
 }
 
+# Show-LuaError — surface a hard-stop error BOTH in the console (status pane)
+# and as a blocking Windows popup in the user's face, because most users ignore
+# the scrolling console text. $Title is the popup caption, $Message is the body
+# (use plain \n line breaks). Best-effort popup: if the GUI subsystem isn't
+# available it silently falls back to the console block, so it never breaks the
+# script. Always prints the console version too.
+function Show-LuaError {
+    param(
+        [string]$Title,
+        [string]$Message
+    )
+    Write-Host "`n========================================================" -ForegroundColor Red
+    Write-Host " $Title" -ForegroundColor Red
+    Write-Host "========================================================" -ForegroundColor Red
+    foreach ($line in ($Message -split "`n")) {
+        Write-Host "  $line" -ForegroundColor Yellow
+    }
+    Write-Host "========================================================" -ForegroundColor Red
+    try {
+        Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop
+        $form = New-Object System.Windows.Forms.Form -Property @{ TopMost = $true; ShowInTaskbar = $true }
+        [void][System.Windows.Forms.MessageBox]::Show(
+            $form,
+            $Message,
+            $Title,
+            [System.Windows.Forms.MessageBoxButtons]::OK,
+            [System.Windows.Forms.MessageBoxIcon]::Error
+        )
+        $form.Dispose()
+    }
+    catch {
+        # GUI not available — the console block above is the fallback.
+    }
+}
+
 # ========================
 # UNRELEASED GAME OVERRIDES
 # Games not yet on Steam - detected by folder name instead of appmanifest
@@ -233,13 +268,18 @@ foreach ($candidate in $steamCandidates) {
 }
 
 if (-not $steamPath) {
-    Write-Host "[-] Could not find Steam installation." -ForegroundColor Red
     if ($steamCandidates.Count -gt 0) {
         Write-Host "    Checked paths:" -ForegroundColor Yellow
         foreach ($candidate in $steamCandidates) {
             Write-Host "    - $candidate" -ForegroundColor DarkGray
         }
     }
+    Show-LuaError -Title "Steam not found" -Message @"
+Could not find your Steam installation on this PC.
+
+Make sure Steam is installed normally, then run the validation again.
+If Steam is installed on another drive, open it once so Windows registers it, then retry.
+"@
     Write-Host "Press any key to exit..."
     $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
     exit
@@ -497,18 +537,19 @@ catch {
 # 0 = Off, 1 = Enforced (On), 2 = Evaluation. Anything non-zero blocks us.
 if ($sacState -and $sacState -ne 0) {
     $sacLabel = if ($sacState -eq 1) { "ON (enforced)" } elseif ($sacState -eq 2) { "Evaluation mode" } else { "Active (state=$sacState)" }
-    Write-Host "    [!] Smart App Control is $sacLabel — it will block tokeer_launcher.exe." -ForegroundColor Yellow
+    Show-LuaError -Title "Smart App Control MUST be OFF" -Message @"
+Smart App Control is $sacLabel.
 
-    Write-Host "`n========================================================" -ForegroundColor Red
-    Write-Host " SMART APP CONTROL MUST BE OFF BEFORE ACTIVATION" -ForegroundColor Red
-    Write-Host "========================================================" -ForegroundColor Red
-    Write-Host " Turn it off, then run this validation again:" -ForegroundColor White
-    Write-Host ""
-    Write-Host "   1. Open Windows Security" -ForegroundColor Yellow
-    Write-Host "   2. App & browser control -> Smart App Control settings" -ForegroundColor Yellow
-    Write-Host "   3. Set it to OFF" -ForegroundColor Yellow
-    Write-Host "   4. Run this validation code again" -ForegroundColor Yellow
-    Write-Host "========================================================" -ForegroundColor Red
+It WILL block the activation (tokeer_launcher.exe) — you cannot get your key until it is turned OFF.
+
+How to turn it off:
+  1. Open Windows Security
+  2. Go to: App & browser control -> Smart App Control settings
+  3. Set it to OFF
+  4. Run this validation again
+
+Note: turning Smart App Control OFF is permanent (Windows won't let you turn it back ON without a full reset), so this is normal and expected.
+"@
     Write-Host "`nPress any key to exit..."
     $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
     exit
@@ -572,10 +613,9 @@ if (-not $updateBlocked) {
 }
 
 if ($issues.Count -gt 0) {
-    Write-Host "`n[!] Please fix the following before running this script:" -ForegroundColor Red
-    foreach ($issue in $issues) {
-        Write-Host "    - $issue" -ForegroundColor Yellow
-    }
+    $issueBody = "Please fix the following before running the validation again:`n`n"
+    $issueBody += (($issues | ForEach-Object { "- $_" }) -join "`n`n")
+    Show-LuaError -Title "Fix these before continuing" -Message $issueBody
     Write-Host "`nPress any key to exit..."
     $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
     exit
@@ -1357,19 +1397,17 @@ function Invoke-CloudRedirectStFixer {
 
         # Steam too old/new for CloudRedirect — the user just needs to update Steam.
         if ($crOutput -match "version .* is not supported" -or $crOutput -match "not supported") {
-            Write-Host "`n    ============================================" -ForegroundColor Red
-            Write-Host "     YOUR STEAM IS OUT OF DATE" -ForegroundColor Red
-            Write-Host "    ============================================" -ForegroundColor Red
-            Write-Host "     The SteamTools fix needs an up-to-date Steam." -ForegroundColor White
+            $updNote = ""
             if ($updStatus -eq "disabled") {
-                Write-Host "     Your Steam auto-updates are currently OFF (steam.cfg)." -ForegroundColor White
-                Write-Host "     Turn updates back on so Steam can update:" -ForegroundColor White
+                $updNote = "Your Steam auto-updates are currently OFF (steam.cfg) — turn them back ON so Steam can update.`n`n"
             }
-            Write-Host "       1. Open Steam and let it fully update" -ForegroundColor Yellow
-            Write-Host "          (Steam -> top-left -> Check for Steam Client Updates)" -ForegroundColor Yellow
-            Write-Host "       2. Fully close Steam once it finishes updating" -ForegroundColor Yellow
-            Write-Host "       3. Run this validation again" -ForegroundColor Yellow
-            Write-Host "    ============================================" -ForegroundColor Red
+            Show-LuaError -Title "Your Steam is out of date" -Message @"
+The SteamTools fix needs an up-to-date Steam, and yours is too old.
+
+${updNote}1. Open Steam and let it fully update (Steam -> top-left -> Check for Steam Client Updates)
+2. Fully close Steam once it finishes updating
+3. Run this validation again
+"@
             return $false
         }
 
