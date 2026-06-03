@@ -136,6 +136,36 @@ function Install-DotNet10DesktopRuntime {
     exit 1
 }
 
+function Show-LuaError {
+    param([string]$Title, [string]$Message)
+    Write-Host ""
+    Write-Host ("=" * 64) -ForegroundColor Red
+    Write-Host "  $Title" -ForegroundColor Red
+    Write-Host ("=" * 64) -ForegroundColor Red
+    foreach ($line in ($Message -split "`n")) { Write-Host "  $line" -ForegroundColor Yellow }
+    Write-Host ("=" * 64) -ForegroundColor Red
+    try {
+        Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop
+        $form = New-Object System.Windows.Forms.Form
+        $form.TopMost = $true
+        [System.Windows.Forms.MessageBox]::Show($form, $Message, $Title,
+            [System.Windows.Forms.MessageBoxButtons]::OK,
+            [System.Windows.Forms.MessageBoxIcon]::Error) | Out-Null
+    } catch {}
+}
+
+function Get-ValidatorCrashHelp {
+    param([int]$Code)
+    # Common .NET CLR / Windows exit codes seen when the validator dies on launch.
+    switch ($Code) {
+        -2146233082 { return ".NET runtime execution failure (0x80131506).`n`nThis is almost always your ANTIVIRUS interfering with the app, or a corrupted / incompatible .NET 10 Desktop Runtime." }
+        -2146233088 { return "Unhandled .NET exception (0x80131500) on startup." }
+        -1073741819 { return "Access violation 0xC0000005 - usually antivirus tampering or a corrupted file." }
+        -1073741515 { return "A required DLL is missing (0xC0000135). The .NET 10 Desktop Runtime is not actually installed/registered." }
+        default      { return ("Exit code {0} (0x{1:X8})." -f $Code, ($Code -band 0xFFFFFFFF)) }
+    }
+}
+
 function Start-LuaToolsValidator {
     param(
         [string]$FilePath,
@@ -167,9 +197,31 @@ function Start-LuaToolsValidator {
         Start-Sleep -Seconds 2
 
         if ($proc.HasExited) {
-            Write-Host "[-] LuaTools Validator closed immediately. Exit code: $($proc.ExitCode)" -ForegroundColor Red
-            Write-Host "    Try running this file manually to see the Windows error:" -ForegroundColor Yellow
-            Write-Host "    $FilePath" -ForegroundColor Yellow
+            $code = $proc.ExitCode
+            $diagnosis = Get-ValidatorCrashHelp -Code $code
+            $msg = @"
+The LuaTools Validator started, then closed immediately.
+
+$diagnosis
+
+HOW TO FIX (try in order):
+
+1. ANTIVIRUS is the most common cause. Add this folder to your
+   antivirus / Windows Defender exclusions (or briefly turn off
+   real-time protection), then run the script again:
+     $workingDir
+
+2. Reinstall the .NET 10 Desktop Runtime (x64), then re-run:
+     https://dotnet.microsoft.com/download/dotnet/10.0
+   (pick ".NET Desktop Runtime", not the SDK or ASP.NET runtime)
+
+3. Delete the LuaToolsValidator folder and run the script again
+   (in case the download got corrupted).
+
+To see the raw Windows error, run the file manually:
+   $FilePath
+"@
+            Show-LuaError -Title "LuaTools Validator closed immediately (exit $code)" -Message $msg
             Write-Host "Press any key to exit..."
             $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
             exit 1
