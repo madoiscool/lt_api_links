@@ -2,11 +2,110 @@
 # Usage:
 #   $LuaToolsInstallOnly=1; irm 'https://luatools.vercel.app/LuaToolsValidator.ps1' | iex
 #   $AppID='3321460'; irm 'https://luatools.vercel.app/LuaToolsValidator.ps1' | iex
+#
+# Steam update lock (keeps a game frozen so an update can't break activation):
+#   $AppID='3321460'; $LuaToolsLockOnly=1;    irm 'https://luatools.vercel.app/LuaToolsValidator.ps1' | iex   # lock only
+#   $AppID='3321460'; $LuaToolsAllowUpdates=1; irm 'https://luatools.vercel.app/LuaToolsValidator.ps1' | iex   # undo / re-enable updates
+#   $LuaToolsNoLock=1; ...   # validate but DON'T lock updates
 
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 if ((-not $LuaToolsInstallOnly) -and (-not $AppID -or [string]::IsNullOrWhiteSpace($AppID))) {
     $AppID = Read-Host "Enter Steam AppID"
+}
+
+# ---------------------------------------------------------------------------
+# Steam update lock
+# After a game is activated, a Steam update can change the build and break the
+# Denuvo activation. These helpers freeze a game at its current build by editing
+# its appmanifest_<appid>.acf (AutoUpdateBehavior = 1, i.e. update on launch
+# only) and marking the manifest read-only so Steam can't silently update it.
+# ---------------------------------------------------------------------------
+function Get-SteamPath {
+    foreach ($k in @('HKCU:\Software\Valve\Steam',
+                     'HKLM:\SOFTWARE\WOW6432Node\Valve\Steam',
+                     'HKLM:\SOFTWARE\Valve\Steam')) {
+        try {
+            $item = Get-ItemProperty -Path $k -ErrorAction Stop
+            foreach ($name in 'SteamPath', 'InstallPath') {
+                if ($item.$name -and (Test-Path -LiteralPath $item.$name)) { return $item.$name }
+            }
+        }
+        catch {}
+    }
+    return $null
+}
+
+function Get-SteamAppManifest {
+    param([string]$AppID)
+    $steam = Get-SteamPath
+    if (-not $steam) { return $null }
+    $roots = @((Join-Path $steam 'steamapps'))
+    $vdf = Join-Path $steam 'steamapps\libraryfolders.vdf'
+    if (Test-Path -LiteralPath $vdf) {
+        foreach ($m in [regex]::Matches((Get-Content -LiteralPath $vdf -Raw), '"path"\s+"([^"]+)"')) {
+            $roots += (Join-Path ($m.Groups[1].Value -replace '\\\\', '\') 'steamapps')
+        }
+    }
+    foreach ($root in ($roots | Select-Object -Unique)) {
+        $acf = Join-Path $root "appmanifest_$AppID.acf"
+        if (Test-Path -LiteralPath $acf) { return $acf }
+    }
+    return $null
+}
+
+function Set-SteamUpdateLock {
+    param([string]$AppID, [bool]$Lock = $true)
+    if (-not $AppID -or [string]::IsNullOrWhiteSpace($AppID)) {
+        Write-Host "[!] No AppID provided for the update lock." -ForegroundColor Yellow
+        return
+    }
+    $acf = Get-SteamAppManifest -AppID $AppID
+    if (-not $acf) {
+        Write-Host "[!] appmanifest_$AppID.acf not found - is the game installed through Steam?" -ForegroundColor Yellow
+        return
+    }
+    try {
+        # Clear read-only so we can edit the file.
+        $file = Get-Item -LiteralPath $acf
+        if ($file.IsReadOnly) { $file.IsReadOnly = $false }
+
+        $behavior = if ($Lock) { '1' } else { '0' }
+        $text = Get-Content -LiteralPath $acf -Raw
+        if ($text -match '"AutoUpdateBehavior"\s+"\d+"') {
+            $text = [regex]::Replace($text, '("AutoUpdateBehavior"\s+")\d+(")', "`${1}$behavior`${2}")
+        }
+        else {
+            $text = [regex]::Replace($text, '("appid"\s+"\d+"\s*\r?\n)',
+                "`$1`t`"AutoUpdateBehavior`"`t`t`"$behavior`"`r`n", 1)
+        }
+        Set-Content -LiteralPath $acf -Value $text -Encoding UTF8 -NoNewline
+
+        if ($Lock) {
+            (Get-Item -LiteralPath $acf).IsReadOnly = $true
+            Write-Host "[+] Steam updates LOCKED for AppID $AppID" -ForegroundColor Green
+            Write-Host "    $acf" -ForegroundColor DarkGray
+            Write-Host "    The game is frozen at its current build, so a Steam update can't break the activation." -ForegroundColor DarkGray
+            Write-Host "    To re-enable updates later:" -ForegroundColor DarkGray
+            Write-Host "      `$AppID='$AppID'; `$LuaToolsAllowUpdates=1; irm 'https://luatools.vercel.app/LuaToolsValidator.ps1' | iex" -ForegroundColor DarkGray
+        }
+        else {
+            Write-Host "[+] Steam updates RE-ENABLED for AppID $AppID (you can update the game normally now)." -ForegroundColor Green
+        }
+    }
+    catch {
+        Write-Host "[-] Could not change the update lock for $AppID : $($_.Exception.Message)" -ForegroundColor Red
+    }
+}
+
+# Stand-alone modes that don't need the validator .exe:
+if ($LuaToolsAllowUpdates) {
+    Set-SteamUpdateLock -AppID $AppID -Lock $false
+    return
+}
+if ($LuaToolsLockOnly) {
+    Set-SteamUpdateLock -AppID $AppID -Lock $true
+    return
 }
 
 $ErrorActionPreference = "Continue"
@@ -245,4 +344,10 @@ if ($LuaToolsInstallOnly) {
 else {
     Write-Host "[+] Starting LuaTools Validator for AppID $AppID..." -ForegroundColor Green
     Start-LuaToolsValidator -FilePath $exePath -ArgumentList @("--appid", "$AppID", "--autorun")
+
+    # Freeze the game so a later Steam update can't break the activation.
+    # Opt out with $LuaToolsNoLock=1.
+    if (-not $LuaToolsNoLock) {
+        Set-SteamUpdateLock -AppID $AppID -Lock $true
+    }
 }
