@@ -961,7 +961,7 @@ if ($isUnreleased) {
     $luaFiles = @()
 }
 else {
-    Write-Host "`n[*] Scanning for .lua files in stplug-in to disable updates/decryption..." -ForegroundColor Cyan
+    Write-Host "`n[*] Pinning the stplug-in lua to freeze the installed build (blocks Steam updates)..." -ForegroundColor Cyan
 
     $stpluginDir = Get-ChildItem -Path $steamPath -Directory -Filter "stplug-in" -Recurse -Depth 3 -ErrorAction SilentlyContinue | Select-Object -First 1
 
@@ -986,16 +986,28 @@ else {
     foreach ($luaFile in $luaFiles) {
         $reportData.LuaFileFound = $true
 
-        # Check if lua is already correctly configured (read-only)
-        $luaRaw = Get-Content $luaFile.FullName -Raw
-        $manifestCommented = ($luaRaw -match "(?m)^\s*--\s*setManifestid\(") -or ($luaRaw -notmatch "setManifestid\(")
-        $dlcCommented = ($luaRaw -notmatch "(?m)^addappid\(.+,.+,.+\)") # no uncommented DLC lines
-        if ($manifestCommented -and $dlcCommented) {
+        # Manifest pinning: UNCOMMENT every setManifestid(...) line so SteamTools
+        # locks the game to the build already installed and Steam stops showing
+        # "Update Required". The CloudRedirect payload fix (applied below) is what
+        # makes SteamTools honor these lines. A commented/absent setManifestid means
+        # the app tracks "latest", which is what keeps prompting to update and can
+        # break the activation.
+        $luaRaw = Get-Content -LiteralPath $luaFile.FullName -Raw
+        $commentedCount = ([regex]::Matches($luaRaw, "(?m)^\s*--+[ \t]*setManifestid\(")).Count
+        $activeCount = ([regex]::Matches($luaRaw, "(?m)^\s*setManifestid\(")).Count
+        if ($commentedCount -gt 0) {
+            try { Copy-Item -LiteralPath $luaFile.FullName -Destination ($luaFile.FullName + ".bak_" + (Get-Date -Format 'yyyyMMdd_HHmmss')) -Force } catch {}
+            $pinned = [regex]::Replace($luaRaw, "(?m)^(\s*)--+[ \t]*(setManifestid\()", '$1$2')
+            [System.IO.File]::WriteAllText($luaFile.FullName, $pinned, (New-Object System.Text.UTF8Encoding($false)))
             $reportData.UpdatesDisabled = $true
-            Write-Host "    [+] $($luaFile.Name) is correctly configured." -ForegroundColor Green
+            Write-Host "    [+] Pinned $($luaFile.Name) to the installed build ($commentedCount manifest line(s) activated) - Steam updates disabled." -ForegroundColor Green
+        }
+        elseif ($activeCount -gt 0) {
+            $reportData.UpdatesDisabled = $true
+            Write-Host "    [+] $($luaFile.Name) is already pinned ($activeCount manifest line(s)) - Steam updates disabled." -ForegroundColor Green
         }
         else {
-            Write-Host "    [!] $($luaFile.Name) has update/decryption lines that need manual attention." -ForegroundColor Yellow
+            Write-Host "    [!] $($luaFile.Name) has no setManifestid lines to pin - this game can't be frozen via manifest pinning." -ForegroundColor Yellow
         }
     }
 
