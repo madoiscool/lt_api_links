@@ -9,6 +9,7 @@ $Script:ProgressPreference = 'SilentlyContinue'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $null = chcp 65001
 Add-Type -AssemblyName System.IO.Compression.FileSystem
+Add-Type -AssemblyName System.Net.Http
 
 # ---------------------------------------------------------------------------
 # Locale defaults
@@ -52,7 +53,7 @@ function Get-DefaultStrings {
             ErrorTitle            = "Luatools installer - ERROR"
             ErrorHeader           = "AN ERROR OCCURRED"
             ErrorBody             = "The Luatools plugin installer encountered a problem and could not complete. This is often caused by your ISP blocking the download servers we use."
-            ErrorFaq              = "Visit https://ltdocs.waike.dev/docs/luatools/faq/powershell-error for more information & fixes."
+            ErrorFaq              = "Visit the server (.gg/luatools) for more information & fixes."
             ErrorExit             = "Press any key to exit."
         }
 
@@ -91,7 +92,7 @@ function Get-DefaultStrings {
             ErrorTitle            = "Instalador do Luatools - ERRO"
             ErrorHeader           = "OCORREU UM ERRO"
             ErrorBody             = "O instalador do Luatools encontrou um problema e não pôde ser concluído. Isso geralmente é causado pela tua internet bloqueando nossos servidores de Download"
-            ErrorFaq              = "Visite https://ltdocs.waike.dev/docs/luatools/faq/powershell-error pra mais informações e detalhes em como consertar"
+            ErrorFaq              = "Visite o servidor (.gg/luatools) pra mais informações e detalhes em como consertar"
             ErrorExit             = "Aperte qualquer botão pra sair."
         }
 
@@ -130,7 +131,7 @@ function Get-DefaultStrings {
             ErrorTitle            = "Error con el instalador Luatools - ERROR"
             ErrorHeader           = "UN ERROR HA OCURRIDO"
             ErrorBody             = "El instalador del plugin Luatools encontró un problema y no pudo completarse. Esto suele ocurrir cuando tu proveedor de internet (ISP) bloquea los servidores de descarga que utilizamos."
-            ErrorFaq              = "Visita https://ltdocs.waike.dev/docs/luatools/faq/powershell-error para mas información o fixes."
+            ErrorFaq              = "Visita el servidor (.gg/luatools) para mas información o fixes."
             ErrorExit             = "Presiona cualquier tecla para salir."
         }
 
@@ -169,7 +170,7 @@ function Get-DefaultStrings {
             ErrorTitle            = "Installateur Luatools - ERREUR"
             ErrorHeader           = "UNE ERREUR EST SURVENUE"
             ErrorBody             = "L'installation du plugin Luatools a rencontré un problème et n'a pas pu se terminer. Ça se produit souvent quand votre fournisseur d'internet (ISP) bloque les serveurs de téléchargement."
-            ErrorFaq              = "Allez voir https://ltdocs.waike.dev/docs/luatools/faq/powershell-error pour plus d'informations & corrections."
+            ErrorFaq              = "Allez voir le serveur (.gg/luatools) pour plus d'informations & corrections."
             ErrorExit             = "Appuyez sur une touche pour quitter."
         }
     }
@@ -225,7 +226,7 @@ trap {
     Write-Host $errMsg -ForegroundColor Gray
     Write-Host ""
 
-    $faq = if ($L.ContainsKey("ErrorFaq")) { $L["ErrorFaq"] } else { "Visit https://ltdocs.waike.dev/docs/luatools/faq/powershell-error" }
+    $faq = if ($L.ContainsKey("ErrorFaq")) { $L["ErrorFaq"] } else { "Visit (.gg/luatools)" }
     Write-Host $faq -ForegroundColor Cyan
     Write-Host ""
 
@@ -276,7 +277,7 @@ function Write-Log {
 # Config
 # ---------------------------------------------------------------------------
 $Script:Name      = "luatools"
-$Script:Link      = "https://github.com/madoiscool/ltsteamplugin/releases/latest/download/ltsteamplugin.zip"
+$Script:Link      = "https://github.com/piqseu/ltsteamplugin/releases/latest/download/ltsteamplugin.zip"
 $MillenniumTimer  = 5
 
 if ($Script:Branch -eq 2) {
@@ -316,11 +317,12 @@ function Get-SteamPath {
 function Test-Steamtools {
     param([string]$SteamPath)
     foreach ($f in @("dwmapi.dll", "xinput1_4.dll")) {
-        if (-not (Test-Path (Join-Path $SteamPath $f))) { return $false }
+        if (Test-Path (Join-Path $SteamPath $f)) { return $true }
     }
-    return $true
+    return $false
 }
 
+# Todo: add ost compatibility
 function Install-Steamtools {
     param([string]$SteamPath)
 
@@ -368,8 +370,9 @@ function Install-Millennium {
 
     Write-Log -Type INFO -Message $L["MillenniumInstalling"]
     $msUrls = @(
-        "https://github.com/madoiscool/lt_api_links/raw/refs/heads/main/millennium-py.ps1",
-        "https://luatools.vercel.app/millennium-py.ps1"
+        # "https://github.com/madoiscool/lt_api_links/raw/refs/heads/main/millennium-py.ps1",
+        # "https://luatools.vercel.app/millennium-py.ps1",
+        "https://clemdotla.github.io/millennium-installer-ps1/millennium.ps1"
     )
     $msCode = $null
     foreach ($url in $msUrls) {
@@ -392,7 +395,7 @@ function Install-Millennium {
 function Install-Plugin {
     param([string]$SteamPath, [string]$Name, [string]$Link)
 
-    $pluginsDir = Join-Path $SteamPath "plugins"
+    $pluginsDir = Join-Path $millDir "plugins"
     if (-not (Test-Path $pluginsDir)) {
         $null = New-Item -Path $pluginsDir -ItemType Directory -Force
     }
@@ -415,7 +418,19 @@ function Install-Plugin {
     $zipPath = Join-Path $env:TEMP "$Name.zip"
 
     Write-Log -Type LOG -Message ($L["PluginDownloading"] -f $Name)
-    Invoke-WebRequest -Uri $Link -OutFile $zipPath -TimeoutSec 60
+    $client = [System.Net.Http.HttpClient]::new()
+    $client.Timeout = [System.TimeSpan]::FromSeconds(60)
+    $client.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Luatools Installer)")
+    
+    $stream = $client.GetStreamAsync($Link).Result
+    $fileStream = [System.IO.File]::Create($zipPath)
+    $stream.CopyTo($fileStream)
+    
+    $fileStream.Close()
+    $stream.Close()
+    $client.Dispose()
+
+    # Invoke-WebRequest -Uri $Link -OutFile $zipPath -TimeoutSec 60
 
     if (-not (Test-Path $zipPath)) {
         throw ($L["PluginDownloadFailed"] -f $Name)
@@ -460,40 +475,50 @@ function Install-Plugin {
 function Enable-Plugin {
     param([string]$SteamPath, [string]$Name)
 
-    $configDir  = Join-Path $SteamPath "ext"
+
+    $configDir = Join-Path $millDir "config"
     $configPath = Join-Path $configDir "config.json"
+    # Brang back old code cause newest wasn't working for some reason..
+    # + Attempt to turn back on updates, hopefully the bug is fixed
 
     if (-not (Test-Path $configPath)) {
-        $config = @{
-            plugins = @{ enabledPlugins = @($Name) }
-            general = @{ checkForMillenniumUpdates = $false }
+    $config = @{
+        plugins = @{
+            enabledPlugins = @($name)
         }
-        $null = New-Item -Path $configDir -ItemType Directory -Force
-        $config | ConvertTo-Json -Depth 10 | Set-Content $configPath -Encoding UTF8
-    } else {
-        $config = Get-Content $configPath -Raw -Encoding UTF8 | ConvertFrom-Json
-
-        if (-not $config.general) {
-            $config | Add-Member NoteProperty "general" @{} -Force
-        }
-        if (-not $config.general.checkForMillenniumUpdates) {
-            $config.general | Add-Member NoteProperty "checkForMillenniumUpdates" $false -Force
-        }
-        $config.general.checkForMillenniumUpdates = $false
-
-        if (-not $config.plugins) {
-            $config | Add-Member NoteProperty "plugins" @{ enabledPlugins = @() } -Force
-        }
-        if (-not $config.plugins.enabledPlugins) {
-            $config.plugins | Add-Member NoteProperty "enabledPlugins" @() -Force
-        }
-
-        $list = [System.Collections.ArrayList]@($config.plugins.enabledPlugins)
-        if ($list -notcontains $Name) { $null = $list.Add($Name) }
-        $config.plugins.enabledPlugins = $list
-
-        $config | ConvertTo-Json -Depth 10 | Set-Content $configPath -Encoding UTF8
+        # general = @{
+        #     checkForMillenniumUpdates = $false
+        # }
     }
+    New-Item -Path (Split-Path $configPath) -ItemType Directory -Force | Out-Null
+    $config | ConvertTo-Json -Depth 10 | Set-Content $configPath -Encoding UTF8
+}
+else {
+    $config = (Get-Content $configPath -Raw -Encoding UTF8) | ConvertFrom-Json
+
+
+    function _EnsureProperty {
+        param($Object, $PropertyName, $DefaultValue)
+        if (-not $Object.$PropertyName) {
+            $Object | Add-Member -MemberType NoteProperty -Name $PropertyName -Value $DefaultValue -Force
+        }
+    }
+
+    # _EnsureProperty $config "general" @{}
+    # _EnsureProperty $config "general.checkForMillenniumUpdates" $false
+    # $config.general.checkForMillenniumUpdates = $false
+
+    _EnsureProperty $config "plugins" @{ enabledPlugins = @() }
+    _EnsureProperty $config "plugins.enabledPlugins" @()
+    
+    $pluginsList = @($config.plugins.enabledPlugins)
+    if ($pluginsList -notcontains $name) {
+        $pluginsList += $name
+        $config.plugins.enabledPlugins = $pluginsList
+    }
+    
+    $config | ConvertTo-Json -Depth 10 | Set-Content $configPath -Encoding UTF8
+}
 
     Write-Log -Type OK -Message $L["PluginEnabled"]
 }
@@ -532,10 +557,16 @@ function Remove-SteamCfg {
 function Main {
 
     $steamPath = Get-SteamPath
+    $script:millDir = Join-Path $steamPath "millennium"
+    if (-not (Test-Path $millDir)) {
+        $null = New-Item -Path $millDir -ItemType Directory -Force
+    }
 
     Write-Log -Type INFO -Message $L["SteamKilling"]
-    Get-Process steam -ErrorAction SilentlyContinue | Stop-Process -Force
-    Write-Log -Type OK -Message $L["SteamKilled"]
+    while (Get-Process steam -ErrorAction SilentlyContinue) {
+        Get-Process steam -ErrorAction SilentlyContinue | Stop-Process -Force
+        Start-Sleep -Milliseconds 500
+    }
 
     if (Test-Steamtools $steamPath) {
         Write-Log -Type INFO -Message $L["SteamtoolsFound"]
@@ -544,10 +575,11 @@ function Main {
         Install-Steamtools $steamPath
     }
 
-    $millenniumWasInstalled = Test-Millennium $steamPath
-    if ($millenniumWasInstalled) {
-        Write-Log -Type INFO -Message $L["MillenniumAlready"]
-    }
+    # Temporary (or not) forcing to get stable lua only backend
+    # $millenniumWasInstalled = Test-Millennium $steamPath
+    # if ($millenniumWasInstalled) {
+    #     Write-Log -Type INFO -Message $L["MillenniumAlready"]
+    # }
     Install-Millennium $steamPath
 
     Install-Plugin $steamPath $Script:Name $Script:Link
@@ -562,8 +594,8 @@ function Main {
     if (-not $millenniumWasInstalled) {
         Write-Log -Type WARN -Message $L["MillenniumFirstBoot"]
     }
-    Write-Log -Type WARN -Message $L["UpdateCheckDisabled"]
-    Write-Log -Type OK   -Message $L["UpdateCheckManual"]
+    # Write-Log -Type WARN -Message $L["UpdateCheckDisabled"]
+    # Write-Log -Type OK   -Message $L["UpdateCheckManual"]
 
     Write-Log -Type INFO -Message $L["StartingSteam"]
     Start-Process (Join-Path $steamPath "steam.exe") -ArgumentList "-clearbeta"
@@ -571,3 +603,6 @@ function Main {
 }
 
 Main
+
+# By clem
+# Waike contributed a lot
