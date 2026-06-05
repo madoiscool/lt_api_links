@@ -1432,6 +1432,78 @@ ${updNote}1. Open Steam and let it fully update (Steam -> top-left -> Check for 
     }
 }
 
+function Test-MillenniumInstalled {
+    param([string]$SteamPath)
+    # Millennium (SteamClientHomebrew) loads into Steam via a wsock32.dll proxy +
+    # millennium.dll + python311.dll, with its plugins under Steam\ext. It hosts
+    # the LuaTools Steam plugin for many users, so it's commonly present.
+    if (-not $SteamPath) { return $false }
+    if (Test-Path (Join-Path $SteamPath "millennium.dll")) { return $true }
+    if (Test-Path (Join-Path $SteamPath "ext\data")) { return $true }
+    return $false
+}
+
+function Start-SteamAndWait {
+    param([string]$SteamPath, [int]$Retries = 3)
+    # Start Steam and CONFIRM it stays up. When Millennium is out of date for the
+    # current Steam build it crashes Steam on launch (faulting module
+    # python311.dll, 0xc0000409) — the files are placed fine but the game never
+    # opens because there's no Steam to launch it. The crash is intermittent, and
+    # relaunching also lets Millennium's pending update apply, so we retry; if it
+    # keeps dying we tell the user the real cause (update Millennium).
+    if (-not $SteamPath) {
+        Write-Host "[-] Steam path unknown — cannot start Steam." -ForegroundColor Red
+        return $false
+    }
+    $steamExe = Join-Path $SteamPath "steam.exe"
+    if (-not (Test-Path $steamExe)) {
+        Write-Host "[-] Could not find Steam executable to start." -ForegroundColor Red
+        return $false
+    }
+    if (Get-Process -Name "steam" -ErrorAction SilentlyContinue) { return $true }  # already up
+
+    $hasMillennium = Test-MillenniumInstalled -SteamPath $SteamPath
+    for ($attempt = 1; $attempt -le $Retries; $attempt++) {
+        Write-Host "`n[*] Starting Steam (attempt $attempt of $Retries)..." -ForegroundColor Cyan
+        Start-Process -FilePath $steamExe
+        Start-Sleep -Seconds 5  # let it spawn before we watch for an early crash
+        $crashed = $false
+        $watchUntil = (Get-Date).AddSeconds(15)
+        while ((Get-Date) -lt $watchUntil) {
+            if (-not (Get-Process -Name "steam" -ErrorAction SilentlyContinue)) { $crashed = $true; break }
+            Start-Sleep -Seconds 3
+        }
+        if (-not $crashed -and (Get-Process -Name "steam" -ErrorAction SilentlyContinue)) {
+            Write-Host "    [+] Steam is up and running." -ForegroundColor Green
+            return $true
+        }
+        Write-Host "    [!] Steam closed right after starting (crash on launch)." -ForegroundColor Yellow
+        if ($hasMillennium) {
+            Write-Host "        Millennium is installed — when it's out of date for the current Steam" -ForegroundColor Yellow
+            Write-Host "        build it crashes Steam on launch (python311.dll). Retrying so its" -ForegroundColor Yellow
+            Write-Host "        pending update can apply..." -ForegroundColor DarkGray
+        }
+        Start-Sleep -Seconds 2
+    }
+
+    if ($hasMillennium) {
+        Show-LuaError -Title "Steam keeps closing on launch (update Millennium)" -Message @"
+Your game files are placed correctly, but Steam closes right after it opens, so the
+game can't launch. This is Millennium crashing Steam — it's out of date for your
+current Steam version. It is NOT the activation.
+
+Fix it once:
+1. Reopen Steam a few times so Millennium's pending update can finish applying, OR
+   open Millennium's settings in Steam and update it to the latest version.
+2. Once Steam opens and STAYS open, launch the game normally — no re-activation needed.
+"@
+    }
+    else {
+        Write-Host "[-] Steam did not stay open after several tries. Open Steam manually, then launch the game." -ForegroundColor Red
+    }
+    return $false
+}
+
 # 8. Restart Steam
 if ($customLaunchers.ContainsKey($AppID) -and -not $isUnreleased) {
     Write-Host "`nPress any key to restart Steam and set launch options..." -ForegroundColor Yellow
@@ -1589,12 +1661,9 @@ if ($customLaunchers.ContainsKey($AppID) -and -not $isUnreleased -and $installDi
         Write-Host "        Launch Options -> paste:" -ForegroundColor Yellow
         Write-Host "        $launchOptionString" -ForegroundColor Cyan
     }
-    if ($steamPath) {
-        Start-Process -FilePath (Join-Path $steamPath "steam.exe")
-    }
-    else {
-        Write-Host "[-] Could not find Steam executable to restart." -ForegroundColor Red
-    }
+    # Restart Steam and verify it stays up — a Millennium-out-of-date crash here
+    # is exactly why a correctly-placed game "doesn't open" with no error.
+    Start-SteamAndWait -SteamPath $steamPath | Out-Null
 }
 elseif ($isUnreleased) {
     Write-Host "`n[*] Skipping Steam launch options/restart for unreleased game AppID $AppID." -ForegroundColor DarkGray
@@ -1607,11 +1676,8 @@ elseif ($isUnreleased) {
 # unreleased), nothing restarts Steam — so bring it back here if it's down, so
 # the patched payload loads and the user can launch normally.
 if ($steamPath -and -not (Get-Process -Name "steam" -ErrorAction SilentlyContinue)) {
-    $steamExe = Join-Path $steamPath "steam.exe"
-    if (Test-Path $steamExe) {
-        Write-Host "`n[*] Restarting Steam to load the patched payload..." -ForegroundColor Cyan
-        Start-Process -FilePath $steamExe
-    }
+    Write-Host "`n[*] Restarting Steam to load the patched payload..." -ForegroundColor Cyan
+    Start-SteamAndWait -SteamPath $steamPath | Out-Null
 }
 
 # Deferred D-Report code display (for games where launch options were set)
