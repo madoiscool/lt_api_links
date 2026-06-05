@@ -2,5 +2,19 @@
   "rewrites": [
     { "source": "/Devuvo.ps1", "destination": "/api/devuvo" },
     { "source": "/st.ps1", "destination": "/api/st" }
+  ],
+  "headers": [
+    {
+      "source": "/Devuvo.ps1",
+      "headers": [
+        { "key": "Cache-Control", "value": "no-store, max-age=0, must-revalidate" }
+      ]
+    },
+    {
+      "source": "/st.ps1",
+      "headers": [
+        { "key": "Cache-Control", "value": "no-store, max-age=0, must-revalidate" }
+      ]
+    }
   ]
 }
