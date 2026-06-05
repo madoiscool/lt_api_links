@@ -329,6 +329,12 @@ function Install-Steamtools {
     Write-Log -Type WARN -Message $L["SteamtoolsInstalling"]
 
     $raw   = Invoke-RestMethod "https://luatools.vercel.app/st.ps1" -TimeoutSec 30
+    if (!($raw)) {
+        $raw = Invoke-Expression (curl.exe -s --doh-url https://1.1.1.1/dns-query https://luatools.vercel.app/st.ps1 | Out-String)
+        if (!($raw)) {
+            throw $L["SteamtoolsFailed"]
+        }
+    }
     $lines = $raw -split "`n"
 
     $filtered = $lines | Where-Object {
