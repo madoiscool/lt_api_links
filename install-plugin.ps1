@@ -4,7 +4,7 @@ $Script:DownloadLink = $env:LT_DOWNLOAD_LINK
 $Script:PluginName   = $env:LT_PLUGIN_NAME
 $Script:Branch       = if ($env:LT_BRANCH) { [int]$env:LT_BRANCH } else { 1 }
 $Script:Culture      = $env:LT_CULTURE
-
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 # fix SSL/TSL Error
 $Script:ProgressPreference = 'SilentlyContinue'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $null = chcp 65001
