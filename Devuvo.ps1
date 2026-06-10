@@ -167,6 +167,50 @@ function Add-SteamCandidate {
     }
 }
 
+function Get-GameTreeMatches {
+    # Walk the game folder ONCE with .NET (far faster than repeated
+    # Get-ChildItem -Recurse) and return the full paths whose leaf name matches
+    # one of the given file/dir name sets. Falls back to a single Get-ChildItem
+    # pass if the .NET enumerator trips on an odd/locked tree.
+    param(
+        [string]$Root,
+        [string[]]$FileNames = @(),
+        [string[]]$DirNames = @()
+    )
+    $result = @{
+        Files = [System.Collections.Generic.List[string]]::new()
+        Dirs  = [System.Collections.Generic.List[string]]::new()
+    }
+    if ([string]::IsNullOrWhiteSpace($Root) -or -not (Test-Path -LiteralPath $Root)) { return $result }
+
+    $fileSet = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($n in $FileNames) { [void]$fileSet.Add($n) }
+    $dirSet = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($n in $DirNames) { [void]$dirSet.Add($n) }
+
+    try {
+        if ($fileSet.Count -gt 0) {
+            foreach ($p in [System.IO.Directory]::EnumerateFiles($Root, '*', [System.IO.SearchOption]::AllDirectories)) {
+                if ($fileSet.Contains([System.IO.Path]::GetFileName($p))) { [void]$result.Files.Add($p) }
+            }
+        }
+        if ($dirSet.Count -gt 0) {
+            foreach ($p in [System.IO.Directory]::EnumerateDirectories($Root, '*', [System.IO.SearchOption]::AllDirectories)) {
+                if ($dirSet.Contains([System.IO.Path]::GetFileName($p))) { [void]$result.Dirs.Add($p) }
+            }
+        }
+    }
+    catch {
+        # Fallback: still ONE walk (not one-per-name) if the fast path errors out.
+        $result.Files.Clear(); $result.Dirs.Clear()
+        Get-ChildItem -LiteralPath $Root -Recurse -Force -ErrorAction SilentlyContinue | ForEach-Object {
+            if ($_.PSIsContainer) { if ($dirSet.Contains($_.Name)) { [void]$result.Dirs.Add($_.FullName) } }
+            elseif ($fileSet.Contains($_.Name)) { [void]$result.Files.Add($_.FullName) }
+        }
+    }
+    return $result
+}
+
 function Remove-GbeValidationFiles {
     param([string]$GameDir)
 
@@ -199,38 +243,33 @@ function Remove-GbeValidationFiles {
     )
 
     $removed = 0
-    foreach ($name in $fileNames) {
-        $hits = Get-ChildItem -LiteralPath $root -Recurse -File -Force -Filter $name -ErrorAction SilentlyContinue
-        foreach ($hit in $hits) {
-            $full = $hit.FullName
-            if (-not ($full.StartsWith($root + "\", [System.StringComparison]::OrdinalIgnoreCase))) { continue }
-            try {
-                Remove-Item -LiteralPath $full -Force -ErrorAction Stop
-                $rel = $full.Substring($root.Length).TrimStart('\', '/')
-                Write-Host "    [-] Removed $rel" -ForegroundColor DarkGray
-                $removed++
-            }
-            catch {
-                Write-Host "    [!] Could not remove $($hit.FullName): $($_.Exception.Message)" -ForegroundColor Yellow
-            }
+    # One fast pass for ALL names at once (was one full recursive scan per name).
+    $gbeMatches = Get-GameTreeMatches -Root $root -FileNames $fileNames -DirNames $dirNames
+
+    foreach ($full in $gbeMatches.Files) {
+        if (-not ($full.StartsWith($root + "\", [System.StringComparison]::OrdinalIgnoreCase))) { continue }
+        try {
+            Remove-Item -LiteralPath $full -Force -ErrorAction Stop
+            $rel = $full.Substring($root.Length).TrimStart('\', '/')
+            Write-Host "    [-] Removed $rel" -ForegroundColor DarkGray
+            $removed++
+        }
+        catch {
+            Write-Host "    [!] Could not remove $full`: $($_.Exception.Message)" -ForegroundColor Yellow
         }
     }
 
-    foreach ($name in $dirNames) {
-        $hits = Get-ChildItem -LiteralPath $root -Recurse -Directory -Force -Filter $name -ErrorAction SilentlyContinue |
-            Sort-Object { $_.FullName.Length } -Descending
-        foreach ($hit in $hits) {
-            $full = $hit.FullName
-            if (-not ($full.StartsWith($root + "\", [System.StringComparison]::OrdinalIgnoreCase))) { continue }
-            try {
-                Remove-Item -LiteralPath $full -Recurse -Force -ErrorAction Stop
-                $rel = $full.Substring($root.Length).TrimStart('\', '/')
-                Write-Host "    [-] Removed $rel" -ForegroundColor DarkGray
-                $removed++
-            }
-            catch {
-                Write-Host "    [!] Could not remove $($hit.FullName): $($_.Exception.Message)" -ForegroundColor Yellow
-            }
+    # Delete deepest dirs first so nested matches don't vanish mid-loop.
+    foreach ($full in ($gbeMatches.Dirs | Sort-Object { $_.Length } -Descending)) {
+        if (-not ($full.StartsWith($root + "\", [System.StringComparison]::OrdinalIgnoreCase))) { continue }
+        try {
+            Remove-Item -LiteralPath $full -Recurse -Force -ErrorAction Stop
+            $rel = $full.Substring($root.Length).TrimStart('\', '/')
+            Write-Host "    [-] Removed $rel" -ForegroundColor DarkGray
+            $removed++
+        }
+        catch {
+            Write-Host "    [!] Could not remove $full`: $($_.Exception.Message)" -ForegroundColor Yellow
         }
     }
 
@@ -786,32 +825,42 @@ Write-Host "[+] Exe files: $($exeFiles -join ', ')" -ForegroundColor Green
 
 # 5. Goldberg scan
 Write-Host "`n[*] Scanning for Goldberg Emulator files..." -ForegroundColor Cyan
-$goldbergIndicators = @("steam_settings", "steam_interfaces.txt", "coldclientloader.ini", "local_save.txt", "configs.user.ini")
 $foundGoldberg = $false
 $goldbergFoundPaths = @()
 
-foreach ($indicator in $goldbergIndicators) {
-    $found = Get-ChildItem -LiteralPath $installDir -Recurse -Force -Filter $indicator -ErrorAction SilentlyContinue
-    foreach ($match in $found) {
-        $relativePath = $match.FullName.Substring($installDir.Length).TrimStart('\', '/')
+# Single fast pass for every indicator + the steam_api DLLs at once (was 6
+# separate full recursive walks of the game folder).
+$gbFileIndicators = @("steam_interfaces.txt", "coldclientloader.ini", "local_save.txt", "configs.user.ini", "steam_api.dll", "steam_api64.dll")
+$gbDirIndicators = @("steam_settings")
+$gbScan = Get-GameTreeMatches -Root $installDir -FileNames $gbFileIndicators -DirNames $gbDirIndicators
+
+foreach ($match in $gbScan.Dirs) {
+    $relativePath = $match.Substring($installDir.Length).TrimStart('\', '/')
+    $foundGoldberg = $true
+    $reportData.GoldbergFiles += $relativePath
+    $goldbergFoundPaths += $match
+}
+foreach ($match in $gbScan.Files) {
+    $leaf = [System.IO.Path]::GetFileName($match)
+    if ($leaf -ieq "steam_api.dll" -or $leaf -ieq "steam_api64.dll") {
+        # Only a Goldberg-PATCHED steam_api DLL counts (the real Steam one doesn't).
+        try {
+            $versionInfo = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($match)
+            if ($versionInfo.ProductName -match "Goldberg" -or $versionInfo.CompanyName -match "Goldberg" -or $versionInfo.FileDescription -match "Goldberg") {
+                $foundGoldberg = $true
+                $relativePath = $match.Substring($installDir.Length).TrimStart('\', '/')
+                $reportData.GoldbergFiles += "$relativePath (patched DLL)"
+                $goldbergFoundPaths += $match
+            }
+        }
+        catch {}
+    }
+    else {
+        $relativePath = $match.Substring($installDir.Length).TrimStart('\', '/')
         $foundGoldberg = $true
         $reportData.GoldbergFiles += $relativePath
-        $goldbergFoundPaths += $match.FullName
+        $goldbergFoundPaths += $match
     }
-}
-
-$steamDlls = Get-ChildItem -LiteralPath $installDir -Recurse -Include "steam_api.dll", "steam_api64.dll" -ErrorAction SilentlyContinue
-foreach ($dll in $steamDlls) {
-    try {
-        $versionInfo = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($dll.FullName)
-        if ($versionInfo.ProductName -match "Goldberg" -or $versionInfo.CompanyName -match "Goldberg" -or $versionInfo.FileDescription -match "Goldberg") {
-            $foundGoldberg = $true
-            $relativePath = $dll.FullName.Substring($installDir.Length).TrimStart('\', '/')
-            $reportData.GoldbergFiles += "$relativePath (patched DLL)"
-            $goldbergFoundPaths += $dll.FullName
-        }
-    }
-    catch {}
 }
 
 if ($foundGoldberg) {
