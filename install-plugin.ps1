@@ -326,41 +326,29 @@ function Test-Steamtools {
     return $false
 }
 
-# Todo: add ost compatibility
 function Install-Steamtools {
     param([string]$SteamPath)
 
     Write-Log -Type WARN -Message $L["SteamtoolsInstalling"]
 
-    $raw   = Invoke-RestMethod "https://luatools.vercel.app/st.ps1" -TimeoutSec 30
-    if (!($raw)) {
-        $raw = Invoke-Expression (curl.exe -s --doh-url https://1.1.1.1/dns-query https://luatools.vercel.app/st.ps1 | Out-String)
-        if (!($raw)) {
-            throw $L["SteamtoolsFailed"]
-        }
-    }
-    $lines = $raw -split "`n"
-
-    $filtered = $lines | Where-Object {
-        ($_ -inotmatch "Start-Process.*steam") -and
-        ($_ -inotmatch "steam\.exe")           -and
-        ($_ -inotmatch "Start-Sleep|Write-Host") -and
-        ($_ -inotmatch "cls|exit")             -and
-        (-not ($_ -imatch "Stop-Process" -and $_ -inotmatch "Get-Process"))
-    }
-
-    $scriptBlock = $filtered -join "`n"
+    # Steamtools is installed via CloudRedirect's prebuilt CLI (the /stfixer
+    # routine), rather than fetching and eval'ing a remote PowerShell script.
+    $exe = Join-Path $env:TEMP "CloudRedirectCLI.exe"
+    Invoke-WebRequest -Uri "https://github.com/Selectively11/CloudRedirect/releases/latest/download/CloudRedirectCLI.exe" -OutFile $exe -TimeoutSec 60 -UseBasicParsing
+    if (-not (Test-Path $exe)) { throw $L["SteamtoolsFailed"] }
 
     for ($attempt = 1; $attempt -le 5; $attempt++) {
         Write-Log -Type LOG -Message $L["SteamtoolsInstalling"]
-        Invoke-Expression $scriptBlock *> $null
+        Start-Process $exe "/stfixer" -Wait
         if (Test-Steamtools $SteamPath) {
             Write-Log -Type OK -Message $L["SteamtoolsInstalled"]
+            Remove-Item $exe -Force -ErrorAction SilentlyContinue
             return
         }
         Write-Log -Type ERR -Message $L["SteamtoolsRetrying"]
     }
 
+    Remove-Item $exe -Force -ErrorAction SilentlyContinue
     throw $L["SteamtoolsFailed"]
 }
 
