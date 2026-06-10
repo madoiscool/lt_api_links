@@ -37,6 +37,7 @@ function Get-DefaultStrings {
             MillenniumAlready     = "Millennium already installed"
             MillenniumFirstBoot   = "Steam startup may be slower on first boot -- let it sit."
             PluginUpdating        = "Plugin already installed, updating"
+            PluginDuplicates      = "Multiple conflicting copies found, cleaning up and reinstalling"
             PluginDownloading     = "Downloading {0}"
             PluginDownloadFailed  = "Failed to download {0}"
             PluginExtracting      = "Extracting {0}"
@@ -76,6 +77,7 @@ function Get-DefaultStrings {
             MillenniumAlready     = "O Millennium ja está instalado"
             MillenniumFirstBoot   = "A Steam pode demorar um pouco pra abrir pela primeira vez -- deixa rolar."
             PluginUpdating        = "Plugin já instalado, atualizando"
+            PluginDuplicates      = "Várias cópias conflitantes encontradas, limpando e reinstalando"
             PluginDownloading     = "Baixando {0}"
             PluginDownloadFailed  = "Falha ao baixar {0}"
             PluginExtracting      = "Extraindo {0}"
@@ -115,6 +117,7 @@ function Get-DefaultStrings {
             MillenniumAlready     = "Millenium ya estaba instalado"
             MillenniumFirstBoot   = "La carga de steam puede ser más lenta la primera vez para cargar las dependencias -- espera pacientemente"
             PluginUpdating        = "El plugin ya esta instalado, actualizando"
+            PluginDuplicates      = "Se encontraron varias copias en conflicto, limpiando y reinstalando"
             PluginDownloading     = "Descargando {0}"
             PluginDownloadFailed  = "Error al descargar {0}"
             PluginExtracting      = "Extrayendo {0}"
@@ -154,6 +157,7 @@ function Get-DefaultStrings {
             MillenniumAlready     = "Millennium déjà installé"
             MillenniumFirstBoot   = "Le prochain lancement de Steam sera plus long -- laisser le temps."
             PluginUpdating        = "Plugin déjà installé, mise à jour"
+            PluginDuplicates      = "Plusieurs copies en conflit trouvées, nettoyage et réinstallation"
             PluginDownloading     = "Installation {0}"
             PluginDownloadFailed  = "Echec de l'installation {0}"
             PluginExtracting      = "Extraction {0}"
@@ -406,19 +410,40 @@ function Install-Plugin {
         $null = New-Item -Path $pluginsDir -ItemType Directory -Force
     }
 
-    $targetDir = Join-Path $pluginsDir $Name
-    foreach ($dir in (Get-ChildItem $pluginsDir -Directory)) {
-        $j = Join-Path $dir.FullName "plugin.json"
-        if (Test-Path $j) {
-            try {
-                $m = Get-Content $j -Raw -Encoding UTF8 | ConvertFrom-Json
-                if ($m.name -eq $Name) {
-                    Write-Log -Type INFO -Message $L["PluginUpdating"]
-                    $targetDir = $dir.FullName
-                    break
-                }
-            } catch {}
+    # Scan the new path AND the legacy <Steam>\plugins for any folder whose
+    # plugin.json declares our plugin name. Millennium 3+ migrates the legacy
+    # folder into the new path on boot, so a stale copy there (e.g. a manual
+    # Python install under a different folder name) would end up colliding with
+    # ours -- two folders, same plugin name -> Millennium crashes on enable.
+    $legacyDir = Join-Path $SteamPath "plugins"
+    $scanDirs  = @($pluginsDir, $legacyDir) | Where-Object { Test-Path $_ } | Select-Object -Unique
+
+    $found = [System.Collections.Generic.List[string]]::new()
+    foreach ($scanDir in $scanDirs) {
+        foreach ($dir in (Get-ChildItem $scanDir -Directory -ErrorAction SilentlyContinue)) {
+            $j = Join-Path $dir.FullName "plugin.json"
+            if (Test-Path $j) {
+                try {
+                    $m = Get-Content $j -Raw -Encoding UTF8 | ConvertFrom-Json
+                    if ($m.name -eq $Name) { $found.Add($dir.FullName) }
+                } catch {}
+            }
         }
+    }
+
+    $targetDir = Join-Path $pluginsDir $Name
+    if ($found.Count -eq 1) {
+        # Single existing install (anywhere) -> update it in place.
+        Write-Log -Type INFO -Message $L["PluginUpdating"]
+        $targetDir = $found[0]
+    } elseif ($found.Count -gt 1) {
+        # Multiple folders claim this plugin name -> remove every copy and
+        # reinstall a single canonical folder to avoid the collision crash.
+        Write-Log -Type WARN -Message $L["PluginDuplicates"]
+        foreach ($dup in $found) {
+            Remove-Item $dup -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        $targetDir = Join-Path $pluginsDir $Name
     }
 
     $zipPath = Join-Path $env:TEMP "$Name.zip"
