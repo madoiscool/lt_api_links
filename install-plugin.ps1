@@ -46,7 +46,7 @@ function Get-DefaultStrings {
             PluginEnabled         = "Plugin enabled"
             RemovingBeta          = "Cleaning up beta flag"
             RemovingCfg           = "Cleaning up steam.cfg"
-            RemovingForceX86      = "Cleaning up ForceX86 registry flags (32 bits)"
+            RemovingFlags         = "Cleaning up ForceX86 flags and offline mode"
             StartingSteam         = "Starting Steam"
             UpdateCheckDisabled   = "Millennium auto-updates disabled to prevent startup hangs."
             UpdateCheckManual     = "Check for Millennium updates manually if you want the latest."
@@ -86,7 +86,7 @@ function Get-DefaultStrings {
             PluginEnabled         = "Plugin habilitado"
             RemovingBeta          = "Limpando flag de beta da Steam"
             RemovingCfg           = "Apagando steam.cfg"
-            RemovingForceX86      = "limpando as flags de registro do ForceX86 (32 bits)"
+            RemovingFlags         = "Limpando flags do ForceX86 e o modo offline"
             StartingSteam         = "Abrindo a Steam"
             UpdateCheckDisabled   = "Atualizações automáticas do Millennium desabilitadas pra evitar travamentos ao iniciar"
             UpdateCheckManual     = "Verifique manualmente por atualizações do Millennium caso você queira a ultima versão"
@@ -126,7 +126,7 @@ function Get-DefaultStrings {
             PluginEnabled         = "Plugin establecido"
             RemovingBeta          = "Limpiando indicador beta"
             RemovingCfg           = "Limpiando steam.cfg"
-            RemovingForceX86      = "Limpiando los registros de ForceX86 (32 bits)"
+            RemovingFlags         = "Limpiando flags de ForceX86 y el modo sin conexión"
             StartingSteam         = "Iniciando Steam"
             UpdateCheckDisabled   = "Las auto-actualizaciones de Millenium están deshabilitadas para prevenir cuelgues al inicio"
             UpdateCheckManual     = "Comprueba las actualizaciones de Millenium manualmente si necesitas la última versión"
@@ -166,7 +166,7 @@ function Get-DefaultStrings {
             PluginEnabled         = "Plugin activé"
             RemovingBeta          = "Nettoyage de la beta"
             RemovingCfg           = "Nettoyage de steam.cfg"
-            RemovingForceX86      = "Nettoyage des registres ForceX86 (32 bits)"
+            RemovingFlags         = "Nettoyage des flags ForceX86 et du mode hors ligne"
             StartingSteam         = "Lancement de Steam"
             UpdateCheckDisabled   = "Les mises à jour de Millennium ont été désactivée pour éviter les blocages au demarrage."
             UpdateCheckManual     = "Vérifiez manuellement les mises à jour de Millennium si vous souhaitez la derniere version."
@@ -554,10 +554,23 @@ function Remove-BetaFlag {
     }
 }
 
-function Remove-ForceX86Flags {
-    Write-Log -Type AUX -Message $L["RemovingForceX86"]
+function Reset-SteamFlags {
+    param([string]$SteamPath)
+    Write-Log -Type AUX -Message $L["RemovingFlags"]
+
+    # Clear ForceX86 (32-bit) registry flags
     @("HKCU:\Software\Valve\Steam","HKLM:\SOFTWARE\Valve\Steam","HKLM:\SOFTWARE\WOW6432Node\Valve\Steam") | ForEach-Object {
         Remove-ItemProperty -Path $_ -Name "SteamCmdForceX86" -ErrorAction SilentlyContinue
+    }
+
+    # Reset Steam offline mode for all accounts (WantsOfflineMode "1" -> "0")
+    $loginUsersPath = Join-Path $SteamPath "config\loginusers.vdf"
+    if (Test-Path $loginUsersPath) {
+        $content = Get-Content -Path $loginUsersPath -Raw
+        if ($content -match '"WantsOfflineMode"\s+"1"') {
+            $newContent = $content -replace '("WantsOfflineMode"\s+)"1"', '$1"0"'
+            Set-Content -Path $loginUsersPath -Value $newContent -Encoding UTF8
+        }
     }
 }
 
@@ -605,7 +618,7 @@ function Main {
 
     Remove-BetaFlag $steamPath
     Remove-SteamCfg $steamPath
-    Remove-ForceX86Flags
+    Reset-SteamFlags $steamPath
 
     Enable-Plugin $steamPath $Script:Name
 
