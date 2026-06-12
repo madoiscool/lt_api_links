@@ -225,7 +225,7 @@ TerminateSteam
 ExtractArchive
 
 if (Test-Path $path) {
-    Remove-Item $path -Force
+    Remove-Item $path -Force -ErrorAction SilentlyContinue
 }
 
 # --------------------
