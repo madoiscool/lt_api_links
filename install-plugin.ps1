@@ -367,9 +367,11 @@ function Install-Millennium {
     param([string]$SteamPath)
 
     Write-Log -Type INFO -Message $L["MillenniumInstalling"]
+    # Our own copy of clem's installer (clemdotla.github.io/millennium-installer-ps1),
+    # patched so the temp-zip cleanup can't crash on accounts whose username has a
+    # space/non-ASCII char (8.3 short paths). Clem's upstream copy is the fallback.
     $msUrls = @(
-        # "https://github.com/madoiscool/lt_api_links/raw/refs/heads/main/millennium-py.ps1",
-        # "https://luatools.vercel.app/millennium-py.ps1",
+        "https://ps.lua.tools/millennium.ps1",
         "https://clemdotla.github.io/millennium-installer-ps1/millennium.ps1"
     )
     $msCode = $null
