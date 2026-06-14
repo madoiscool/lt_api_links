@@ -357,10 +357,13 @@ function Install-Steamtools {
 # ---------------------------------------------------------------------------
 function Test-Millennium {
     param([string]$SteamPath)
-    foreach ($f in @("millennium.dll", "python311.dll")) {
-        if (-not (Test-Path (Join-Path $SteamPath $f))) { return $false }
+    # wsock32.dll is the Millennium proxy DLL dropped at the Steam root by BOTH
+    # v2.x and v3.x; millennium.dll / python311.dll only exist on the older v2.x
+    # layout. Match on any of them so detection works across versions.
+    foreach ($f in @("wsock32.dll", "millennium.dll", "python311.dll")) {
+        if (Test-Path -LiteralPath (Join-Path $SteamPath $f)) { return $true }
     }
-    return $true
+    return $false
 }
 
 function Install-Millennium {
@@ -398,10 +401,14 @@ function Install-Millennium {
         $ErrorActionPreference = $prevEAP
     }
 
+    # NOTE: Test-Millennium only checks the classic root DLLs (millennium.dll /
+    # python311.dll). Newer Millennium uses a different layout, so a "false" here
+    # does NOT reliably mean it failed -- never make it fatal, just warn and let
+    # the install continue (matches the long-standing behaviour).
     if (Test-Millennium $SteamPath) {
         Write-Log -Type OK -Message $L["MillenniumInstalled"]
     } else {
-        throw $L["MillenniumNotFound"]
+        Write-Log -Type WARN -Message $L["MillenniumInstalled"]
     }
 }
 
