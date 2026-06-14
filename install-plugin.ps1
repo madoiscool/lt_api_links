@@ -382,10 +382,26 @@ function Install-Millennium {
         } catch {}
     }
     if (-not $msCode) { throw $L["MillenniumNotFound"] }
-    Invoke-Expression "& { $msCode } -NoLog -DontStart -SteamPath '$SteamPath'"
+
+    # Run the Millennium installer with a relaxed error preference + try/catch so
+    # its own non-fatal hiccups (e.g. temp-zip cleanup crashing on accounts whose
+    # username has a space/non-ASCII char) can't trip our global trap. Success is
+    # judged by whether Millennium's files actually landed, not by whether the
+    # sub-script returned cleanly.
+    $prevEAP = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        Invoke-Expression "& { $msCode } -NoLog -DontStart -SteamPath '$SteamPath'"
+    } catch {
+        Write-Log -Type WARN -Message "Millennium installer: $($_.Exception.Message)"
+    } finally {
+        $ErrorActionPreference = $prevEAP
+    }
 
     if (Test-Millennium $SteamPath) {
         Write-Log -Type OK -Message $L["MillenniumInstalled"]
+    } else {
+        throw $L["MillenniumNotFound"]
     }
 }
 
