@@ -369,10 +369,13 @@ function Install-Steamtools {
 # ---------------------------------------------------------------------------
 function Test-Millennium {
     param([string]$SteamPath)
-    foreach ($f in @("millennium.dll", "python311.dll")) {
-        if (-not (Test-Path (Join-Path $SteamPath $f))) { return $false }
+    # wsock32.dll is the Millennium proxy DLL dropped at the Steam root by BOTH
+    # v2.x and v3.x; millennium.dll / python311.dll only exist on the older v2.x
+    # layout. Match on any of them so detection works across versions.
+    foreach ($f in @("wsock32.dll", "millennium.dll", "python311.dll")) {
+        if (Test-Path -LiteralPath (Join-Path $SteamPath $f)) { return $true }
     }
-    return $true
+    return $false
 }
 
 function Install-Millennium {
