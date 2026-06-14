@@ -193,10 +193,10 @@ function ExtractArchive() {
                     
                     foreach ($part in $pathParts) {
                         $currentPath = Join-Path $currentPath $part
-                        if (Test-Path $currentPath) {
-                            $item = Get-Item $currentPath
+                        if (Test-Path -LiteralPath $currentPath) {
+                            $item = Get-Item -LiteralPath $currentPath
                             if (-not $item.PSIsContainer) {
-                                Remove-Item $currentPath -Force
+                                Remove-Item -LiteralPath $currentPath -Force
                             }
                         }
                     }
@@ -224,9 +224,11 @@ $path = DownloadArchive
 TerminateSteam
 ExtractArchive
 
-if (Test-Path $path) {
-    Remove-Item $path -Force -ErrorAction SilentlyContinue
-}
+try {
+    if ($path -and (Test-Path -LiteralPath $path)) {
+        Remove-Item -LiteralPath $path -Force
+    }
+} catch {}
 
 # --------------------
 
