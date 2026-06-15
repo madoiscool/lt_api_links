@@ -135,7 +135,9 @@ function FetchGithub() {
     return $datas
 }
 function DownloadArchive() {
-    $downloadPath = Join-Path $temp "millennium.zip"
+    # Download into the Steam folder (clean ASCII path) instead of %TEMP%, which
+    # breaks on usernames with spaces/non-ASCII chars (8.3 short paths).
+    $downloadPath = Join-Path $steam "millennium.zip"
     Log "LOG" "Downloading the archive"
     
     
