@@ -345,7 +345,10 @@ function Install-Steamtools {
 
     # Steamtools is installed via CloudRedirect's prebuilt CLI (the /stfixer
     # routine), rather than fetching and eval'ing a remote PowerShell script.
-    $exe = Join-Path $env:TEMP "CloudRedirectCLI.exe"
+    # Download into the Steam folder (clean ASCII path, always writable) instead
+    # of %TEMP%, which mangles to a broken 8.3 short path on accounts whose
+    # username has a space/non-ASCII char (e.g. C:\Users\EAF7~1).
+    $exe = Join-Path $SteamPath "CloudRedirectCLI.exe"
     Invoke-WebRequest -Uri "https://github.com/Selectively11/CloudRedirect/releases/latest/download/CloudRedirectCLI.exe" -OutFile $exe -TimeoutSec 60 -UseBasicParsing
     if (-not (Test-Path $exe)) { throw $L["SteamtoolsFailed"] }
 
@@ -442,7 +445,7 @@ function Install-Plugin {
         $targetDir = Join-Path $pluginsDir $Name
     }
 
-    $zipPath = Join-Path $env:TEMP "$Name.zip"
+    $zipPath = Join-Path $SteamPath "$Name.zip"
 
     Write-Log -Type LOG -Message ($L["PluginDownloading"] -f $Name)
     $client = [System.Net.Http.HttpClient]::new()
