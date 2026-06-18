@@ -378,14 +378,19 @@ function Install-Millennium {
     # space/non-ASCII char (8.3 short paths). Clem's upstream copy is the fallback.
     $msUrls = @(
         "https://ps.lua.tools/millennium.ps1",
-        "https://clemdotla.github.io/millennium-installer-ps1/millennium.ps1"
+        "https://luatools.vercel.app/millennium.ps1"
     )
+    # Try each mirror up to 3x with a browser UA -- guards against transient
+    # failures and bot-protection 403s. (A full ISP/region block of every host
+    # can't be solved here; that needs a VPN/DNS on the user's end.)
     $msCode = $null
     foreach ($url in $msUrls) {
-        try {
-            $msCode = Invoke-RestMethod $url -TimeoutSec 30
-            if ($msCode) { break }
-        } catch {}
+        for ($try = 1; $try -le 3 -and -not $msCode; $try++) {
+            try {
+                $msCode = Invoke-RestMethod $url -TimeoutSec 30 -Headers @{ "User-Agent" = "Mozilla/5.0 (Luatools Installer)" }
+            } catch { Start-Sleep -Milliseconds 800 }
+        }
+        if ($msCode) { break }
     }
     if (-not $msCode) { throw $L["MillenniumNotFound"] }
 
