@@ -119,9 +119,11 @@ $customLaunchers = @{
     "3768760" = @{ Exe = "tokeer_launcher.exe"; GameName = "007 First Light" }
     # Street Fighter 6 (Denuvo + tokeer)
     "1364780" = @{ Exe = "tokeer_launcher.exe"; GameName = "Street Fighter 6" }
+    # The Adventures of Elliot: The Millennium Tales (Denuvo + tokeer)
+    "3483510" = @{ Exe = "tokeer_launcher.exe"; GameName = "The Adventures of Elliot: The Millennium Tales" }
 
 
-    
+
 }
 
 # ========================
