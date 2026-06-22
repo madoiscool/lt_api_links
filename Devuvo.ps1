@@ -141,6 +141,9 @@ $reportData = [ordered]@{
     ConflictingFiles     = @()
 
     WindowsUpdateBlocked = $false
+    OstActive            = $false
+    OstEngine            = "none"
+    OstTomlOk            = $false
 }
 
 Write-Host "Looking for Steam installation..." -ForegroundColor Cyan
@@ -595,6 +598,46 @@ Note: turning Smart App Control OFF is permanent (Windows won't let you turn it 
 }
 else {
     Write-Host "    [+] Smart App Control is OFF or not present." -ForegroundColor Green
+}
+
+# 4.9 Check OpenSteamTool (OST) — the engine that serves the registry/Denuvo ticket.
+# TokeerDRM codes only apply when OST is active, so we detect it the exact same way
+# the OST installer does and report it. (Reported only — the bot decides whether to
+# require it, so this stays safe for the legacy GBE flow.)
+Write-Host "`n[*] Checking OpenSteamTool (OST) engine..." -ForegroundColor Cyan
+$ostCore   = (Test-Path (Join-Path $steamPath "OpenSteamTool.dll")) -or (Test-Path (Join-Path $steamPath "mktl.dll"))
+$ostHijack = (Test-Path (Join-Path $steamPath "dwmapi.dll")) -and (Test-Path (Join-Path $steamPath "xinput1_4.dll"))
+$ostActive = $ostCore -and $ostHijack
+if (Test-Path (Join-Path $steamPath "mktl.dll")) {
+    $ostEngine = "mktl (fork)"
+}
+elseif (Test-Path (Join-Path $steamPath "OpenSteamTool.dll")) {
+    $ostEngine = "OpenSteamTool (official)"
+}
+else {
+    $ostEngine = "none"
+}
+
+# The official OST needs its toml to include config\stplug-in; the mktl fork reads
+# stplug-in natively, so it's always considered OK there.
+$ostTomlOk = $true
+if ($ostActive -and $ostEngine -like "OpenSteamTool*") {
+    $tomlPath = Join-Path $steamPath "opensteamtool.toml"
+    $ostTomlOk = (Test-Path $tomlPath) -and ((Get-Content $tomlPath -Raw) -match "stplug-in")
+}
+
+$reportData.OstActive = $ostActive
+$reportData.OstEngine = $ostEngine
+$reportData.OstTomlOk = $ostTomlOk
+
+if ($ostActive) {
+    Write-Host "    [+] OST engine detected: $ostEngine" -ForegroundColor Green
+    if (-not $ostTomlOk) {
+        Write-Host "    [!] opensteamtool.toml is not pointed at config\stplug-in — open the TokeerDRM app to finish setup." -ForegroundColor Yellow
+    }
+}
+else {
+    Write-Host "    [-] OpenSteamTool is not installed/active (needed for TokeerDRM codes)." -ForegroundColor Yellow
 }
 
 # 5. Gate check - stop if something is wrong
@@ -1282,6 +1325,9 @@ $jsonReport = [ordered]@{
     updates_disabled        = $reportData.UpdatesDisabled
     windows_update_blocked  = $reportData.WindowsUpdateBlocked
     windows_update_services = $wuDetails
+    ost_active              = $reportData.OstActive
+    ost_engine              = $reportData.OstEngine
+    ost_toml_ok             = $reportData.OstTomlOk
     hwid                    = $hwid
     mac_addresses           = $macAddresses
     public_ip               = $publicIp
@@ -1317,8 +1363,9 @@ try {
 
         # For games that need launch options written, defer the D-Report code display
         # until AFTER Steam restart - prevents users from closing the script early
-        # and skipping the launch options write.
-        $deferCodeDisplay = $customLaunchers.ContainsKey($AppID) -and -not $isUnreleased
+        # and skipping the launch options write. (When OST is active we don't write
+        # launch options at all, so there's nothing to defer for.)
+        $deferCodeDisplay = $customLaunchers.ContainsKey($AppID) -and -not $isUnreleased -and -not $ostActive
 
         if (-not $deferCodeDisplay) {
             Write-Host ""
@@ -1554,7 +1601,7 @@ Fix it once:
 }
 
 # 8. Restart Steam
-if ($customLaunchers.ContainsKey($AppID) -and -not $isUnreleased) {
+if ($customLaunchers.ContainsKey($AppID) -and -not $isUnreleased -and -not $ostActive) {
     Write-Host "`nPress any key to restart Steam and set launch options..." -ForegroundColor Yellow
 }
 else {
@@ -1571,7 +1618,10 @@ if ($steamPath) {
 }
 
 # --- Set custom launch options (Steam must be closed for this to persist) ---
-if ($customLaunchers.ContainsKey($AppID) -and -not $isUnreleased -and $installDir -and $steamPath) {
+# NOTE: gated on -not $ostActive. With OpenSteamTool active the game launches
+# normally (OST serves the registry/Denuvo ticket) — the tokeer_launcher.exe wrapper
+# must NOT be set, and any previously-written launch options are cleared below.
+if ($customLaunchers.ContainsKey($AppID) -and -not $isUnreleased -and -not $ostActive -and $installDir -and $steamPath) {
     Write-Host "`nClosing Steam to write launch options..." -ForegroundColor Cyan
     # Steam caches config in memory and rewrites localconfig.vdf on exit. If we
     # touch the VDF while Steam is still alive, our change is either blocked by a
@@ -1717,6 +1767,13 @@ if ($customLaunchers.ContainsKey($AppID) -and -not $isUnreleased -and $installDi
 elseif ($isUnreleased) {
     Write-Host "`n[*] Skipping Steam launch options/restart for unreleased game AppID $AppID." -ForegroundColor DarkGray
     Write-Host "[*] Checking for old Steam LaunchOptions written by older validators..." -ForegroundColor Cyan
+    Remove-SteamLaunchOptionsForApp -SteamPath $steamPath -TargetAppID $AppID
+}
+elseif ($ostActive -and $steamPath) {
+    # OpenSteamTool/registry method: the game launches normally, no tokeer_launcher
+    # wrapper. Strip any custom launch options a previous (legacy) activation left so
+    # Steam runs the real game exe and OST serves the ticket.
+    Write-Host "`n[*] OpenSteamTool is active — clearing any custom Steam launch options for AppID $AppID..." -ForegroundColor Cyan
     Remove-SteamLaunchOptionsForApp -SteamPath $steamPath -TargetAppID $AppID
 }
 
