@@ -1613,8 +1613,15 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
 # the current Steam build. When it does run it closes Steam (the CLI does it
 # itself), so it's before the launch-options write, which also needs Steam
 # closed — one shutdown covers both, and Steam is restarted afterward.
-if ($steamPath) {
+# GATED on -not $ostActive: CloudRedirect patches the *SteamTools* payload and
+# drops cloud_redirect.dll — that's meaningless under OpenSteamTool and can drag
+# SteamTools back in (the exact engine conflict that causes Denuvo code 00). With
+# OST active the engine serves the manifest/ticket itself, so skip it entirely.
+if ($steamPath -and -not $ostActive) {
     Invoke-CloudRedirectStFixer -SteamPath $steamPath | Out-Null
+}
+elseif ($ostActive) {
+    Write-Host "`n[*] OpenSteamTool is active — skipping the SteamTools CloudRedirect patch." -ForegroundColor DarkGray
 }
 
 # --- Set custom launch options (Steam must be closed for this to persist) ---
