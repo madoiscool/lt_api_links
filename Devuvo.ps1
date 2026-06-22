@@ -127,6 +127,17 @@ $customLaunchers = @{
 }
 
 # ========================
+# FORCE-GBE OVERRIDE
+# AppIDs that must use the GBE/tokeer_launcher method even when OpenSteamTool is
+# active — for Denuvo titles that reject the OST registry ticket (code 88500012).
+# Keep this in sync with the bot's /tokeer-gbe-add list. Example:
+#   $forceGbe = @("493340", "2688950")
+# ========================
+$forceGbe = @(
+)
+$isForceGbe = $forceGbe -contains $AppID
+
+# ========================
 # VALIDATION MODE
 # ========================
 
@@ -1365,7 +1376,7 @@ try {
         # until AFTER Steam restart - prevents users from closing the script early
         # and skipping the launch options write. (When OST is active we don't write
         # launch options at all, so there's nothing to defer for.)
-        $deferCodeDisplay = $customLaunchers.ContainsKey($AppID) -and -not $isUnreleased -and -not $ostActive
+        $deferCodeDisplay = $customLaunchers.ContainsKey($AppID) -and -not $isUnreleased -and (-not $ostActive -or $isForceGbe)
 
         if (-not $deferCodeDisplay) {
             Write-Host ""
@@ -1601,7 +1612,7 @@ Fix it once:
 }
 
 # 8. Restart Steam
-if ($customLaunchers.ContainsKey($AppID) -and -not $isUnreleased -and -not $ostActive) {
+if ($customLaunchers.ContainsKey($AppID) -and -not $isUnreleased -and (-not $ostActive -or $isForceGbe)) {
     Write-Host "`nPress any key to restart Steam and set launch options..." -ForegroundColor Yellow
 }
 else {
@@ -1628,7 +1639,7 @@ elseif ($ostActive) {
 # NOTE: gated on -not $ostActive. With OpenSteamTool active the game launches
 # normally (OST serves the registry/Denuvo ticket) — the tokeer_launcher.exe wrapper
 # must NOT be set, and any previously-written launch options are cleared below.
-if ($customLaunchers.ContainsKey($AppID) -and -not $isUnreleased -and -not $ostActive -and $installDir -and $steamPath) {
+if ($customLaunchers.ContainsKey($AppID) -and -not $isUnreleased -and (-not $ostActive -or $isForceGbe) -and $installDir -and $steamPath) {
     Write-Host "`nClosing Steam to write launch options..." -ForegroundColor Cyan
     # Steam caches config in memory and rewrites localconfig.vdf on exit. If we
     # touch the VDF while Steam is still alive, our change is either blocked by a
@@ -1776,10 +1787,11 @@ elseif ($isUnreleased) {
     Write-Host "[*] Checking for old Steam LaunchOptions written by older validators..." -ForegroundColor Cyan
     Remove-SteamLaunchOptionsForApp -SteamPath $steamPath -TargetAppID $AppID
 }
-elseif ($ostActive -and $steamPath) {
+elseif ($ostActive -and -not $isForceGbe -and $steamPath) {
     # OpenSteamTool/registry method: the game launches normally, no tokeer_launcher
     # wrapper. Strip any custom launch options a previous (legacy) activation left so
-    # Steam runs the real game exe and OST serves the ticket.
+    # Steam runs the real game exe and OST serves the ticket. (Skipped for force-GBE
+    # games — those KEEP their tokeer_launcher even when OST is active.)
     Write-Host "`n[*] OpenSteamTool is active — clearing any custom Steam launch options for AppID $AppID..." -ForegroundColor Cyan
     Remove-SteamLaunchOptionsForApp -SteamPath $steamPath -TargetAppID $AppID
 }
