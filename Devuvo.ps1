@@ -155,6 +155,7 @@ $reportData = [ordered]@{
     OstActive            = $false
     OstEngine            = "none"
     OstTomlOk            = $false
+    UpdatesDisabled      = $false   # manifest pinning removed; always false now
 }
 
 Write-Host "Looking for Steam installation..." -ForegroundColor Cyan
@@ -1065,7 +1066,13 @@ if ($isUnreleased) {
     $luaFiles = @()
 }
 else {
-    Write-Host "`n[*] Pinning the stplug-in lua to freeze the installed build (blocks Steam updates)..." -ForegroundColor Cyan
+    # Manifest / lua pinning is REMOVED (2026-06-23). Uncommenting the lua's
+    # setManifestid lines reverts the game to the lua author's OLDER build, which no
+    # longer matches the freshly-minted Denuvo ownership ticket -> 88500012. We never
+    # pin; and if a previous validator run (or the lua author) left any setManifestid
+    # ACTIVE, we re-comment it so the game tracks the LATEST manifest - this also REPAIRS
+    # installs a previous pin already broke. We still locate the lua for LuaFileFound.
+    Write-Host "`n[*] Checking stplug-in lua (no manifest pinning - keeps the build matching the Denuvo ticket)..." -ForegroundColor Cyan
 
     $stpluginDir = Get-ChildItem -Path $steamPath -Directory -Filter "stplug-in" -Recurse -Depth 3 -ErrorAction SilentlyContinue | Select-Object -First 1
 
@@ -1090,28 +1097,18 @@ else {
     foreach ($luaFile in $luaFiles) {
         $reportData.LuaFileFound = $true
 
-        # Manifest pinning: UNCOMMENT every setManifestid(...) line so SteamTools
-        # locks the game to the build already installed and Steam stops showing
-        # "Update Required". The CloudRedirect payload fix (applied below) is what
-        # makes SteamTools honor these lines. A commented/absent setManifestid means
-        # the app tracks "latest", which is what keeps prompting to update and can
-        # break the activation.
+        # Remove any manifest pin: re-comment active setManifestid lines so the game
+        # tracks the latest manifest (matches the Denuvo ticket).
         $luaRaw = Get-Content -LiteralPath $luaFile.FullName -Raw
-        $commentedCount = ([regex]::Matches($luaRaw, "(?m)^\s*--+[ \t]*setManifestid\(")).Count
         $activeCount = ([regex]::Matches($luaRaw, "(?m)^\s*setManifestid\(")).Count
-        if ($commentedCount -gt 0) {
+        if ($activeCount -gt 0) {
             try { Copy-Item -LiteralPath $luaFile.FullName -Destination ($luaFile.FullName + ".bak_" + (Get-Date -Format 'yyyyMMdd_HHmmss')) -Force } catch {}
-            $pinned = [regex]::Replace($luaRaw, "(?m)^(\s*)--+[ \t]*(setManifestid\()", '$1$2')
-            [System.IO.File]::WriteAllText($luaFile.FullName, $pinned, (New-Object System.Text.UTF8Encoding($false)))
-            $reportData.UpdatesDisabled = $true
-            Write-Host "    [+] Pinned $($luaFile.Name) to the installed build ($commentedCount manifest line(s) activated) - Steam updates disabled." -ForegroundColor Green
-        }
-        elseif ($activeCount -gt 0) {
-            $reportData.UpdatesDisabled = $true
-            Write-Host "    [+] $($luaFile.Name) is already pinned ($activeCount manifest line(s)) - Steam updates disabled." -ForegroundColor Green
+            $unpinned = [regex]::Replace($luaRaw, "(?m)^(\s*)(setManifestid\()", '$1--$2')
+            [System.IO.File]::WriteAllText($luaFile.FullName, $unpinned, (New-Object System.Text.UTF8Encoding($false)))
+            Write-Host "    [+] $($luaFile.Name): removed $activeCount manifest pin(s) - game tracks the latest manifest." -ForegroundColor Green
         }
         else {
-            Write-Host "    [!] $($luaFile.Name) has no setManifestid lines to pin - this game can't be frozen via manifest pinning." -ForegroundColor Yellow
+            Write-Host "    [*] $($luaFile.Name): no manifest pins (latest manifest)." -ForegroundColor DarkGray
         }
     }
 
