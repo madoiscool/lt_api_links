@@ -137,6 +137,19 @@ $forceGbe = @(
 )
 $isForceGbe = $forceGbe -contains $AppID
 
+# Every force-GBE AppID must get the tokeer_launcher.exe launch options written,
+# even when OpenSteamTool is active and even if the game isn't in the named
+# $customLaunchers map above. Give any force-GBE AppID that lacks an entry a
+# default launcher, so the launch-options writer below treats it like any other
+# GBE game (this is what makes "whatever is in the force-GBE list gets the custom
+# launch options" actually true — previously the writer ALSO required a
+# $customLaunchers entry, so bare force-GBE IDs were silently skipped/cleared).
+foreach ($gbeId in $forceGbe) {
+    if (-not $customLaunchers.ContainsKey($gbeId)) {
+        $customLaunchers[$gbeId] = @{ Exe = "tokeer_launcher.exe"; GameName = "AppID $gbeId" }
+    }
+}
+
 # ========================
 # VALIDATION MODE
 # ========================
