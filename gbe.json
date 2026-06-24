@@ -1,0 +1,6 @@
+{
+  "_comment": "Force-GBE AppIDs - games delivered via the GBE/tokeer_launcher zip instead of OpenSteamTool (Denuvo 012 titles). Keep in sync with the bot's /tokeer-gbe list. api/devuvo.js injects these into $forceGbe in Devuvo.ps1 at serve time.",
+  "appids": [
+    "1570010"
+  ]
+}
