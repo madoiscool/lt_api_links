@@ -63,6 +63,8 @@ $customLaunchers = @{
     "629820"  = @{ Exe = "tokeer_launcher.exe"; GameName = "Maneater" }
     # FAR: Changing Tides (Denuvo + tokeer)
     "1570010" = @{ Exe = "tokeer_launcher.exe"; GameName = "FAR: Changing Tides" }
+    # F1 25 (Denuvo + tokeer)
+    "3059520" = @{ Exe = "tokeer_launcher.exe"; GameName = "F1 25" }
     # Planet Coaster (Denuvo + tokeer)
     "493340"  = @{ Exe = "tokeer_launcher.exe"; GameName = "Planet Coaster" }
     # Crimson Desert (Denuvo + tokeer)
@@ -134,6 +136,10 @@ $customLaunchers = @{
 #   $forceGbe = @("493340", "2688950")
 # ========================
 $forceGbe = @(
+    "626690"
+    "3059520"
+    "1971870"
+    "1570010"
 )
 $isForceGbe = $forceGbe -contains $AppID
 
