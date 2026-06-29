@@ -135,12 +135,7 @@ $customLaunchers = @{
 # Keep this in sync with the bot's /tokeer-gbe-add list. Example:
 #   $forceGbe = @("493340", "2688950")
 # ========================
-$forceGbe = @(
-    "626690"
-    "3059520"
-    "1971870"
-    "1570010"
-)
+$forceGbe = @()
 $isForceGbe = $forceGbe -contains $AppID
 
 # A force-GBE AppID writes its custom launch options by reading the EXACT launcher
