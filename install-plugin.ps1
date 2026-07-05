@@ -321,37 +321,34 @@ function Get-SteamPath {
 function Test-Steamtools {
     param([string]$SteamPath)
     foreach ($f in @("dwmapi.dll", "xinput1_4.dll")) {
-        if (Test-Path (Join-Path $SteamPath $f)) { return $true }
+        if (Test-Path -LiteralPath (Join-Path $SteamPath $f)) { return $true }
     }
     return $false
 }
-
 function Install-Steamtools {
     param([string]$SteamPath)
 
     Write-Log -Type WARN -Message $L["SteamtoolsInstalling"]
 
-    # Steamtools is installed via CloudRedirect's prebuilt CLI (the /stfixer
-    # routine), rather than fetching and eval'ing a remote PowerShell script.
-    # Download into the Steam folder (clean ASCII path, always writable) instead
-    # of %TEMP%, which mangles to a broken 8.3 short path on accounts whose
-    # username has a space/non-ASCII char (e.g. C:\Users\EAF7~1).
-    $exe = Join-Path $SteamPath "CloudRedirectCLI.exe"
-    Invoke-WebRequest -Uri "https://github.com/Selectively11/CloudRedirect/releases/latest/download/CloudRedirectCLI.exe" -OutFile $exe -TimeoutSec 60 -UseBasicParsing
-    if (-not (Test-Path $exe)) { throw $L["SteamtoolsFailed"] }
+    $zipFile = Join-Path $SteamPath "ost.zip"
+    Invoke-WebRequest -Uri "https://github.com/madoiscool/lt_api_links/releases/download/ost-148/ost.zip" -OutFile $zipFile -TimeoutSec 60 -UseBasicParsing
+    if (-not (Test-Path -LiteralPath $zipFile)) { throw $L["SteamtoolsFailed"] }
 
-    for ($attempt = 1; $attempt -le 5; $attempt++) {
-        Write-Log -Type LOG -Message $L["SteamtoolsInstalling"]
-        Start-Process $exe "/stfixer" -Wait
-        if (Test-Steamtools $SteamPath) {
-            Write-Log -Type OK -Message $L["SteamtoolsInstalled"]
-            Remove-Item $exe -Force -ErrorAction SilentlyContinue
-            return
-        }
-        Write-Log -Type ERR -Message $L["SteamtoolsRetrying"]
+    Get-Process -Name "steam", "steamwebhelper" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+    Expand-Archive -LiteralPath $zipFile -DestinationPath $SteamPath -Force
+    Remove-Item -LiteralPath $zipFile -Force -ErrorAction SilentlyContinue
+
+    $steamCfg = Join-Path $SteamPath "steam.cfg"
+    $steamCfgBak = Join-Path $SteamPath "steam.cfg.bak"
+    if (Test-Path -LiteralPath $steamCfg) {
+        Move-Item -LiteralPath $steamCfg -Destination $steamCfgBak -Force -ErrorAction SilentlyContinue
     }
 
-    Remove-Item $exe -Force -ErrorAction SilentlyContinue
+    if (Test-Steamtools $SteamPath) {
+        Write-Log -Type OK -Message $L["SteamtoolsInstalled"]
+        return
+    }
+
     throw $L["SteamtoolsFailed"]
 }
 
@@ -633,12 +630,12 @@ function Main {
         Start-Sleep -Milliseconds 500
     }
 
-    if (Test-Steamtools $steamPath) {
-        Write-Log -Type INFO -Message $L["SteamtoolsFound"]
-    } else {
-        Write-Log -Type ERR -Message $L["SteamtoolsNotFound"]
-        Install-Steamtools $steamPath
-    }
+    #if (Test-Steamtools $steamPath) {
+    #    Write-Log -Type INFO -Message $L["SteamtoolsFound"]
+    #} else {
+    #    Write-Log -Type ERR -Message $L["SteamtoolsNotFound"]
+    Install-Steamtools $steamPath # checks commented out so reinstalls get people out of china tools
+    #}
 
     # Temporary (or not) forcing to get stable lua only backend
     # $millenniumWasInstalled = Test-Millennium $steamPath
