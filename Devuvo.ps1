@@ -1800,15 +1800,30 @@ elseif ($ostActive -and -not $isForceGbe -and $steamPath) {
     # OpenSteamTool/registry method: the game launches normally, no tokeer_launcher
     # wrapper. Strip any custom launch options a previous (legacy) activation left so
     # Steam runs the real game exe and OST serves the ticket. (Skipped for force-GBE
-    # games — those KEEP their tokeer_launcher even when OST is active.)
-    Write-Host "`n[*] OpenSteamTool is active — clearing any custom Steam launch options for AppID $AppID..." -ForegroundColor Cyan
+    # games - those KEEP their tokeer_launcher even when OST is active.)
+    #
+    # Close Steam FIRST. Clearing launch options edits localconfig.vdf, and Steam
+    # rewrites that file from memory on exit - so a clear applied while Steam is
+    # running gets silently reverted. Closing it also guarantees the restart below
+    # (Steam ends up down, so the final block starts it) so the game reloads cleanly
+    # and OST re-serves the ticket - the restart users expect even when nothing was
+    # actually cleared.
+    Write-Host "`n[*] OpenSteamTool is active - closing Steam to clear any custom launch options for AppID $AppID..." -ForegroundColor Cyan
+    foreach ($procName in @("steam", "steamwebhelper")) {
+        Stop-Process -Name $procName -Force -ErrorAction SilentlyContinue
+    }
+    $steamDeadline = (Get-Date).AddSeconds(20)
+    while ((Get-Process -Name "steam" -ErrorAction SilentlyContinue) -and (Get-Date) -lt $steamDeadline) {
+        Start-Sleep -Milliseconds 500
+    }
+    Start-Sleep -Seconds 1  # grace so the OS releases the VDF handle before we edit it
     Remove-SteamLaunchOptionsForApp -SteamPath $steamPath -TargetAppID $AppID
 }
 
-# The CloudRedirect STFixer step closes Steam to patch the payload. For games
-# that don't go through the launch-options block above (non-custom-launcher or
-# unreleased), nothing restarts Steam — so bring it back here if it's down, so
-# the patched payload loads and the user can launch normally.
+# Steam may have been closed above - by the CloudRedirect STFixer (payload patch),
+# the launch-options write block, or the OST clear branch. Whoever closed it, bring
+# it back here if it's down so the patched payload/cleared config loads and the user
+# can launch normally. (Games that never closed Steam just skip this.)
 if ($steamPath -and -not (Get-Process -Name "steam" -ErrorAction SilentlyContinue)) {
     Write-Host "`n[*] Restarting Steam to load the patched payload..." -ForegroundColor Cyan
     Start-SteamAndWait -SteamPath $steamPath | Out-Null
