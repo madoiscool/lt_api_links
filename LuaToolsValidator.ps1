@@ -119,8 +119,7 @@ New-Item -ItemType Directory -Force -Path $installRoot | Out-Null
 
 $validatorUrls = @(
     "https://github.com/Tesla697/LuaToolsValidator/releases/latest/download/LuaToolsValidator.exe",
-    "https://raw.githubusercontent.com/Tesla697/fixed-25/main/LuaToolsValidator.exe",
-    "https://github.com/Tesla697/fixed-25/releases/download/luatools-validator/LuaToolsValidator.exe"
+    "https://github.com/Tesla697/LuaToolsValidator/releases/download/v1.0.0/LuaToolsValidator.exe"
 )
 
 $downloaded = $false
