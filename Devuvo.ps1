@@ -722,9 +722,9 @@ $reportData.OstTomlOk = $ostTomlOk
 if ($ostActive) {
     Write-Host "    [+] OST engine detected: $ostEngine" -ForegroundColor Green
     # NOTE: we intentionally do NOT block or warn on a missing toml→stplug-in redirect
-    # here. Redemption happens in the TokeerDRM app/plugin, which refuse to redeem (and
-    # pop a repair/setup prompt) until the engine is fully configured — so the validator
-    # leaves toml setup entirely to them. $ostTomlOk stays in the report for telemetry.
+    # here. Redemption happens in the TokeerDRM app, which refuses to redeem (and
+    # pops a repair/setup prompt) until the engine is fully configured, so the validator
+    # leaves toml setup entirely to it. $ostTomlOk stays in the report for telemetry.
 }
 else {
     Write-Host "    [-] OpenSteamTool is not installed/active (needed for TokeerDRM codes)." -ForegroundColor Yellow
