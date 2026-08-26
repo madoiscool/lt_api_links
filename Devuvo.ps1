@@ -1226,18 +1226,64 @@ else {
 }
 
 # 7. System info collection
+
+# Rank an adapter by what it IS, not by how much memory it claims. A laptop with
+# an Intel iGPU next to a real card lists both, and the iGPU often reports the
+# bigger number because shared system memory is not VRAM. Memory only breaks ties.
+function Get-GpuClassRank {
+    param([string]$Name)
+
+    $n = ($Name -replace '\s+', ' ').Trim()
+    if ($n -match 'GeForce|Quadro|TITAN|Tesla|\bRTX\b|\bGTX\b|FirePro|Radeon (RX|R[579]|HD \d|Pro [WV]|VII)|Radeon RX|\bArc\b.*\b[AB]\d{3}') { return 3 }
+    if ($n -match 'Intel.*(UHD|HD|Iris)|Radeon\(TM\) Graphics|Radeon Graphics|Vega \d{1,2} Graphics|Radeon \d{3}M\b|Graphics Media Accelerator') { return 1 }
+    return 2
+}
+
+# Both memory keys can be a REG_BINARY blob or a plain number depending on the
+# driver, and MemorySize is only 32 bits wide.
+function Get-AdapterMemoryBytes {
+    param($Props)
+
+    foreach ($key in @('HardwareInformation.qwMemorySize', 'HardwareInformation.MemorySize')) {
+        $raw = $Props.$key
+        if ($null -eq $raw) { continue }
+
+        $value = 0L
+        if ($raw -is [byte[]]) {
+            if ($raw.Length -ge 8) { $value = [BitConverter]::ToInt64($raw, 0) }
+            elseif ($raw.Length -ge 4) { $value = [int64][BitConverter]::ToUInt32($raw, 0) }
+        }
+        else {
+            try { $value = [int64][uint64]$raw } catch { $value = 0L }
+        }
+
+        if ($value -gt 0) { return $value }
+    }
+
+    return 0L
+}
+
 function Get-PrimaryGpuInfo {
-    $controllers = @()
+    $adapters = @{}
+
     try {
-        $controllers = @(Get-CimInstance -ClassName Win32_VideoController -ErrorAction Stop |
-            Where-Object { $_.Name -and ($_.Name -notmatch 'Microsoft Basic|Remote Display|Parsec|Virtual|VMware|Hyper-V') })
+        Get-CimInstance -ClassName Win32_VideoController -ErrorAction Stop |
+            Where-Object { $_.Name -and ($_.Name -notmatch 'Microsoft Basic|Remote Display|Parsec|Virtual|VMware|Hyper-V|Citrix|DameWare') } |
+            ForEach-Object {
+                $name = $_.Name.Trim()
+                # AdapterRAM is a uint32. Anything at the 4 GB ceiling has wrapped:
+                # an 8 GB card and a 4 GB card both land on 4294967295, which is
+                # where the bogus VRAM numbers came from. Treat those as unknown.
+                $bytes = 0L
+                if ($_.AdapterRAM -gt 0 -and $_.AdapterRAM -lt 4293918720) { $bytes = [int64]$_.AdapterRAM }
+                $adapters[$name.ToLower()] = [pscustomobject]@{ Name = $name; MemoryBytes = $bytes }
+            }
     }
     catch {}
 
-    $registryAdapters = @()
     try {
         $displayClass = "HKLM:\SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}"
-        $registryAdapters = @(Get-ChildItem -LiteralPath $displayClass -ErrorAction Stop |
+        Get-ChildItem -LiteralPath $displayClass -ErrorAction Stop |
             Where-Object { $_.PSChildName -match '^\d{4}$' } |
             ForEach-Object {
                 $props = Get-ItemProperty -LiteralPath $_.PSPath -ErrorAction SilentlyContinue
@@ -1247,52 +1293,51 @@ function Get-PrimaryGpuInfo {
                 if ([string]::IsNullOrWhiteSpace($name)) { $name = $props.'HardwareInformation.AdapterString' }
                 if ([string]::IsNullOrWhiteSpace($name)) { return }
 
-                $memoryBytes = 0L
-                $qwMemory = $props.'HardwareInformation.qwMemorySize'
-                if ($qwMemory -is [byte[]] -and $qwMemory.Length -ge 8) {
-                    $memoryBytes = [BitConverter]::ToInt64($qwMemory, 0)
-                }
-                elseif ($qwMemory) {
-                    try { $memoryBytes = [int64]$qwMemory } catch {}
-                }
+                $name = $name.Trim()
+                $key = $name.ToLower()
+                $bytes = Get-AdapterMemoryBytes -Props $props
 
-                if ($memoryBytes -le 0 -and $props.'HardwareInformation.MemorySize') {
-                    try { $memoryBytes = [uint64]$props.'HardwareInformation.MemorySize' } catch {}
+                if ($adapters.ContainsKey($key)) {
+                    # The registry figure is the 64-bit one, so it beats WMI's.
+                    if ($bytes -gt 0) { $adapters[$key].MemoryBytes = $bytes }
                 }
-
-                [pscustomobject]@{
-                    Name        = $name.Trim()
-                    MemoryBytes = [int64]$memoryBytes
+                else {
+                    $adapters[$key] = [pscustomobject]@{ Name = $name; MemoryBytes = $bytes }
                 }
-            } |
-            Where-Object { $_.MemoryBytes -gt 0 } |
-            Sort-Object MemoryBytes -Descending)
+            }
     }
     catch {}
 
-    if ($registryAdapters.Count -gt 0) {
-        $best = $registryAdapters | Select-Object -First 1
-        return [pscustomobject]@{
-            Name   = $best.Name
-            VramGB = [math]::Round($best.MemoryBytes / 1GB, 1)
-        }
+    $ranked = @($adapters.Values |
+        ForEach-Object {
+            $rank = Get-GpuClassRank -Name $_.Name
+            [pscustomobject]@{
+                Name        = $_.Name
+                MemoryBytes = $_.MemoryBytes
+                Rank        = $rank
+                Integrated  = ($rank -eq 1)
+            }
+        } |
+        Sort-Object @{Expression = 'Rank'; Descending = $true}, @{Expression = 'MemoryBytes'; Descending = $true})
+
+    if ($ranked.Count -eq 0) {
+        return [pscustomobject]@{ Name = "Unknown"; VramGB = 0; Integrated = $false; All = @() }
     }
 
-    $gpu = $controllers |
-        Where-Object { $_.AdapterRAM -gt 0 } |
-        Sort-Object AdapterRAM -Descending |
-        Select-Object -First 1
-
-    if ($gpu) {
-        return [pscustomobject]@{
-            Name   = $gpu.Name.Trim()
-            VramGB = [math]::Round($gpu.AdapterRAM / 1GB, 1)
+    $best = $ranked[0]
+    $all = @($ranked | ForEach-Object {
+        [pscustomobject]@{
+            name       = $_.Name
+            vram_gb    = [math]::Round($_.MemoryBytes / 1GB, 1)
+            integrated = $_.Integrated
         }
-    }
+    })
 
     return [pscustomobject]@{
-        Name   = "Unknown"
-        VramGB = 0
+        Name       = $best.Name
+        VramGB     = [math]::Round($best.MemoryBytes / 1GB, 1)
+        Integrated = $best.Integrated
+        All        = $all
     }
 }
 
@@ -1383,10 +1428,14 @@ $cpuName = "Unknown"
 try { $cpuName = (Get-CimInstance -ClassName Win32_Processor -ErrorAction Stop | Select-Object -First 1).Name.Trim() } catch {}
 $gpuName = "Unknown"
 $gpuVram = 0
+$gpuIntegrated = $false
+$gpuAll = @()
 try {
     $gpuInfo = Get-PrimaryGpuInfo
     $gpuName = $gpuInfo.Name
     $gpuVram = $gpuInfo.VramGB
+    $gpuIntegrated = [bool]$gpuInfo.Integrated
+    $gpuAll = @($gpuInfo.All)
 }
 catch {}
 $ramGB = 0
@@ -1451,10 +1500,12 @@ $jsonReport = [ordered]@{
     cpu                     = $cpuName
     gpu                     = $gpuName
     gpu_vram_gb             = $gpuVram
+    gpu_integrated          = $gpuIntegrated
+    gpu_all                 = $gpuAll
     ram_gb                  = $ramGB
     os                      = $osName
     disk_free_gb            = $diskFreeGB
-} | ConvertTo-Json -Depth 3
+} | ConvertTo-Json -Depth 4
 
 try {
     $tempFile = [System.IO.Path]::GetTempFileName()
