@@ -837,6 +837,26 @@ Write-Host "`nAll checks passed." -ForegroundColor Green
 # ---- Auto-backup saves before reactivation ----
 Write-Host "`n[*] Backing up game saves..." -ForegroundColor Cyan
 
+function Remove-TreeRobust {
+    # Remove-Item -Recurse -Force intermittently throws "directory not empty" (it
+    # deletes children asynchronously and can hit a briefly locked or read-only file,
+    # common with OneDrive sync or antivirus). Clear attributes, retry, then fall back
+    # to cmd's rd which handles that race reliably. Returns whether the path is gone.
+    param([string]$Path)
+    if (-not (Test-Path -LiteralPath $Path)) { return $true }
+    for ($i = 0; $i -lt 3; $i++) {
+        try {
+            Get-ChildItem -LiteralPath $Path -Recurse -Force -ErrorAction SilentlyContinue |
+                ForEach-Object { try { $_.Attributes = 'Normal' } catch {} }
+            [System.IO.Directory]::Delete($Path, $true)
+        }
+        catch { Start-Sleep -Milliseconds 200 }
+        if (-not (Test-Path -LiteralPath $Path)) { return $true }
+    }
+    & cmd /c "rd /s /q `"$Path`"" 2>$null | Out-Null
+    return (-not (Test-Path -LiteralPath $Path))
+}
+
 $backupRoot = Join-Path $env:USERPROFILE "Danny_Save_Backups"
 $backupDir = Join-Path $backupRoot $AppID
 $saveLocations = @()
@@ -922,8 +942,12 @@ if ($firstWord) {
 }
 
 if ($saveLocations.Count -gt 0) {
-    # Clean previous backup
-    if (Test-Path $backupDir) { Remove-Item -Path $backupDir -Recurse -Force }
+    # Clean previous backup (non-fatal: a leftover locked file must not abort the run)
+    if (Test-Path $backupDir) {
+        if (-not (Remove-TreeRobust -Path $backupDir)) {
+            Write-Host "[!] Could not fully clear the old backup at $backupDir; continuing." -ForegroundColor Yellow
+        }
+    }
     New-Item -Path $backupDir -ItemType Directory -Force | Out-Null
 
     $manifest = @{
