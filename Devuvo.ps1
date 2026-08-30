@@ -444,6 +444,45 @@ if (Test-Path $libraryFoldersPath) {
     }
 }
 
+# libraryfolders.vdf can miss a library (a drive added while Steam was closed, an
+# older Steam, or files copied into a library Steam has not re-scanned). Probe the
+# usual Steam library locations on every fixed drive too, so a game on D:/E: is not
+# false-reported as missing just because the vdf only listed the C: library.
+$fixedDrives = @()
+try {
+    $fixedDrives = [System.IO.DriveInfo]::GetDrives() |
+        Where-Object { $_.DriveType -eq [System.IO.DriveType]::Fixed -and $_.IsReady } |
+        ForEach-Object { $_.RootDirectory.FullName }
+}
+catch {
+    $fixedDrives = Get-PSDrive -PSProvider FileSystem -ErrorAction SilentlyContinue |
+        ForEach-Object { $_.Root }
+}
+foreach ($drive in $fixedDrives) {
+    if ([string]::IsNullOrWhiteSpace($drive)) { continue }
+    $libGuesses = @(
+        (Join-Path $drive "SteamLibrary"),
+        (Join-Path $drive "Steam"),
+        (Join-Path $drive "SteamLibrary\Steam"),
+        (Join-Path $drive "Games\SteamLibrary"),
+        (Join-Path $drive "Program Files (x86)\Steam"),
+        (Join-Path $drive "Program Files\Steam"),
+        ($drive.TrimEnd('\'))
+    )
+    foreach ($guess in $libGuesses) {
+        if (Test-Path -LiteralPath (Join-Path $guess "steamapps\common")) {
+            $libraries += $guess
+        }
+    }
+}
+
+# Drop duplicate library paths (case-insensitive), keeping first-seen order.
+$seenLib = @{}
+$libraries = @($libraries | Where-Object {
+    $key = ($_ -replace '[\\/]+$', '').ToLowerInvariant()
+    if ($seenLib.ContainsKey($key)) { $false } else { $seenLib[$key] = $true; $true }
+})
+
 if ($libraries.Count -eq 0) {
     $libraries = @($steamPath)
 }
