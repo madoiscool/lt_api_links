@@ -3,6 +3,72 @@ if (-not $AppID -or [string]::IsNullOrWhiteSpace($AppID)) {
     $AppID = Read-Host "Enter Steam AppID"
 }
 
+# $LockVersion is set by the validator wrapper from the "Disable Steam updates for
+# this game" checkbox. When ABSENT (older validator app, or a direct run) it stays
+# $false, and section 6 keeps its current un-pin behavior — so nothing changes for
+# anyone until they're on a validator build that actually passes the flag.
+if (-not (Test-Path variable:LockVersion)) { $LockVersion = $false }
+
+# --- Version-lock helpers (proven standalone before folding in) ---------------
+function Get-LtInstalledDepots {
+    # @{ depotId = @{ manifest; size } } from the acf's InstalledDepots block ONLY.
+    # Shared runtimes live in a separate SharedDepots block and are excluded, so we
+    # never pin a shared depot to a guessed build.
+    param([string]$AcfPath)
+    $result = @{}
+    if (-not (Test-Path -LiteralPath $AcfPath)) { return $result }
+    $text = Get-Content -LiteralPath $AcfPath -Raw
+    $m = [regex]::Match($text, '(?s)"InstalledDepots"\s*\{')
+    if (-not $m.Success) { return $result }
+    $i = $m.Index + $m.Length; $depth = 1
+    while ($i -lt $text.Length -and $depth -gt 0) {
+        if ($text[$i] -eq '{') { $depth++ } elseif ($text[$i] -eq '}') { $depth-- }
+        $i++
+    }
+    $block = $text.Substring($m.Index + $m.Length, $i - ($m.Index + $m.Length))
+    foreach ($dm in [regex]::Matches($block, '(?s)"(\d+)"\s*\{([^{}]*)\}')) {
+        $depot = $dm.Groups[1].Value; $body = $dm.Groups[2].Value
+        $gm = [regex]::Match($body, '"manifest"\s*"(\d+)"')
+        if (-not $gm.Success) { continue }
+        $sm = [regex]::Match($body, '"size"\s*"(\d+)"')
+        $result[$depot] = @{ manifest = $gm.Groups[1].Value; size = ($(if ($sm.Success) { $sm.Groups[1].Value } else { '0' })) }
+    }
+    return $result
+}
+
+function Set-LtVersionPin {
+    # Pin every INSTALLED depot to its currently-installed manifest (never a stale
+    # GID that would downgrade the game); leave shared-runtime depots (not in
+    # InstalledDepots) EXACTLY as written. Returns the active-pin count.
+    param([string]$LuaPath, [string]$AcfPath)
+    $lines = [System.IO.File]::ReadAllLines($LuaPath)
+    $rxSet = '^\s*(--)?\s*setmanifestid\s*\('
+    $depots = Get-LtInstalledDepots -AcfPath $AcfPath
+    $out = New-Object System.Collections.Generic.List[string]
+    $handled = @{}
+    foreach ($ln in $lines) {
+        if ($ln -match $rxSet) {
+            $dm = [regex]::Match($ln, 'setmanifestid\s*\(\s*(\d+)', 'IgnoreCase')
+            $depot = if ($dm.Success) { $dm.Groups[1].Value } else { $null }
+            if ($depot -and $depots.ContainsKey($depot)) {
+                $g = $depots[$depot]
+                $out.Add(('setManifestid({0}, "{1}", {2})' -f $depot, $g.manifest, $g.size))
+                $handled[$depot] = $true
+            } else {
+                $out.Add($ln); if ($depot) { $handled[$depot] = $true }
+            }
+        } else { $out.Add($ln) }
+    }
+    foreach ($depot in $depots.Keys) {
+        if (-not $handled.ContainsKey($depot)) {
+            $g = $depots[$depot]
+            $out.Add(('setManifestid({0}, "{1}", {2})' -f $depot, $g.manifest, $g.size))
+        }
+    }
+    [System.IO.File]::WriteAllLines($LuaPath, $out, (New-Object System.Text.UTF8Encoding($false)))
+    return @($out | Where-Object { $_ -match '^\s*setManifestid\(' }).Count
+}
+
 # Show-LuaError — surface a hard-stop error BOTH in the console (status pane)
 # and as a blocking Windows popup in the user's face, because most users ignore
 # the scrolling console text. $Title is the popup caption, $Message is the body
@@ -126,6 +192,172 @@ $customLaunchers = @{
 
 
 
+}
+
+# ========================
+# VERSION-LOCKED GAMES
+# A game whose LATEST Steam build broke activation gets forced back to a known-good
+# older build: we write a version-locked lua (pins every main depot to the good
+# build's manifest) and refuse to hand out a D-Report code until Steam has actually
+# downgraded to it. A user on the broken latest build gets the lock written + told
+# to let Steam "update" (the pin turns that into a downgrade); only a user already
+# on the good build proceeds to the report.
+# Format: AppID -> @{ GameName; BuildId; CheckDepot; CheckManifest; Lua = @'...'@ }
+#   CheckDepot     one main depot from the lua
+#   CheckManifest  the manifest GID that depot must be on for the build to count as
+#                  downgraded (read back from the appmanifest InstalledDepots block)
+#   Lua            the exact locked lua we write to stplug-in\<AppID>.lua
+# ========================
+$versionLockedGames = @{
+    "3751950" = @{
+        GameName      = "Assassin's Creed Black Flag Resynced"
+        BuildId       = "24424450"
+        CheckDepot    = "3751951"
+        CheckManifest = "4397710407098141927"
+        Lua           = @'
+-- Generated with Luie @ https://lua.tools/
+-- 3751950 - Assassin's Creed Black Flag Resynced
+-- Version-locked to Build 24424450 — released 2026-08-04 13:58:25 UTC
+-- Generated 2026-08-07 05:26:55 UTC
+-- # Depots (Total/DLC/Shared): 10/0/2
+
+-- Main AppID
+addappid(3751950, 1, "e6d96386c77349411f5be39f2955ee0649a9a80abd22c3d69752bfc6e3302539")
+
+-- Main Depots
+addappid(3751951, 1, "0495628add2f29892c7a7930e1ed5332f68e374d7621e3338f23492fcd8f23db")
+setManifestid(3751951, "4397710407098141927")
+addappid(3751953, 1, "f96dc68fd865006d30d7d804bab42593f8bb6a5250624df45771cbc2a9c7aa45") -- French
+setManifestid(3751953, "3022415893432196011")
+addappid(3751954, 1, "b61e5b022604f5f47312b82b8489487c5b1dc57159c8ee09ecac0c7959631762") -- Italian
+setManifestid(3751954, "6892818699399123643")
+addappid(3751955, 1, "f2ae043d5d7111cfd549ed1bd3f0611cd26711aa4a55e1af56889e43e8d0fb1c") -- German
+setManifestid(3751955, "4309823939662694323")
+addappid(3751956, 1, "c6c9dba85bf9b4a6f19551cc87b047ab631cd88317027eb33e30174e4bbe41fc") -- Spanish
+setManifestid(3751956, "6870137386025150758")
+addappid(3751957, 1, "c98ba5f83bc7269be83bedef8689d8a68ff2bb4ad1d6f7ba221178305af557c4") -- Brazilian
+setManifestid(3751957, "4086000294114352953")
+addappid(3751958, 1, "17b0d6cff686c37972334878f48648f8982f40f290fdaeddc022e1a795e6452c") -- Japanese
+setManifestid(3751958, "5424793249443767029")
+addappid(3751959, 1, "6011c824af6fe4db62d3154d751de76d49422e4a56218d54d8ceb716cac7fa6c") -- Schinese
+setManifestid(3751959, "6456623308878089663")
+
+-- DLC's (no depot keys required)
+addappid(4496490) -- Assassin's Creed Black Flag Resynced - Master Assassin Character Pack
+addappid(4496500) -- Assassin's Creed Black Flag Resynced - Master Assassin Character Pack - Ubisoft Activation
+addappid(4496510) -- Assassin's Creed Black Flag Resynced - Master Assassin Naval Pack
+addappid(4496520) -- Assassin's Creed Black Flag Resynced - Master Assassin Naval Pack - Ubisoft Activation
+addappid(4496530) -- Assassin's Creed Black Flag Resynced - Hellfire Character Pack
+addappid(4496540) -- Assassin's Creed Black Flag Resynced - Hellfire Character Pack - Ubisoft Activation
+addappid(4496550) -- Assassin's Creed Black Flag Resynced - Hellfire Naval Pack
+addappid(4496560) -- Assassin's Creed Black Flag Resynced - Hellfire Naval Pack - Ubisoft Activation
+addappid(4496580) -- Assassin's Creed Black Flag Resynced - Sea Serpent Character Pack
+addappid(4496590) -- Assassin's Creed Black Flag Resynced - Sea Serpent Character Pack - Ubisoft Activation
+addappid(4496600) -- Assassin's Creed Black Flag Resynced - Sea Serpent Naval Pack
+addappid(4496610) -- Assassin's Creed Black Flag Resynced - Sea Serpent Naval Pack - Ubisoft Activation
+addappid(4496620) -- Assassin's Creed Black Flag Resynced - Dragon Storm Character Pack
+addappid(4496630) -- Assassin's Creed Black Flag Resynced - Dragon Storm Character Pack - Ubisoft Activation
+addappid(4496640) -- Assassin's Creed Black Flag Resynced - Dragon Storm Naval Pack
+addappid(4496650) -- Assassin's Creed Black Flag Resynced - Dragon Storm Naval Pack - Ubisoft Activation
+addappid(4496660) -- Assassin's Creed Black Flag Resynced - Map Pack
+addappid(4496670) -- Assassin's Creed Black Flag Resynced - MAP PACK - Ubisoft Activation
+addappid(4496720) -- Assassin's Creed Black Flag Resynced - Standard Edition - Ubisoft Activation
+addappid(4496730) -- Assassin's Creed Black Flag Resynced - Deluxe Edition - Ubisoft Activation
+addappid(4519940) -- Assassin's Creed Black Flag Resynced - Standard Edition - Prepurchase - Ubisoft Activation
+addappid(4519950) -- Assassin's Creed Black Flag Resynced - Deluxe Edition - Prepurchase - Ubisoft Activation
+addappid(4872930) -- Assassin's Creed Black Flag Resynced - Standard Edition - PREVIEW - Ubisoft Activation
+addappid(4892480) -- Assassin's Creed Black Flag Resynced - Deluxe Edition - PREVIEW - Ubisoft Activation
+
+-- Shared Depots (Runtimes / Launchers / ETC)
+addappid(228989, 1, "ad69276eb476cf06c40312df7376d63deac0c838b9a2767005be8bb306ffb853") -- (windows)
+addappid(1716751, 1, "84780b728a23b1dabbe8b064807ccd3dbd40c67139ed569101104a418c581675")
+'@
+    }
+    "3405690" = @{
+        GameName      = "EA SPORTS FC 26"
+        BuildId       = "23481646"
+        CheckDepot    = "3405691"
+        CheckManifest = "7181972322428689225"
+        Lua           = @'
+-- Generated with Luie @ https://lua.tools/
+-- 3405690 - EA SPORTS FC™ 26
+-- Version-locked to Build 23481646 (EA SPORTS FC 26 version 1.6.1 · EA SPORTS FC™ 26 update for 3 June 2026) — released 2026-06-03 10:37:08 UTC
+-- Generated 2026-08-28 22:28:47 UTC
+-- # Depots (Total/DLC/Shared): 25/0/3
+
+-- Main AppID
+addappid(3405690, 1, "d72f742e665d75526611fdff936f05ab1703820ecf6f6c5764f3173e5b6a401d")
+
+-- Main Depots
+addappid(3405691, 1, "12a93ecb44c6b853d762578ffef21df60aa702f723232d87f81f485f7e636684")
+setManifestid(3405691, "7181972322428689225")
+addappid(3405692, 1, "c6ec306084ddbc34166f66738b51806ae01d351b007df9dbfb5a17531575b5b7") -- English
+setManifestid(3405692, "1210142944114678350")
+addappid(3405693, 1, "684e872bb91267d94cb6b604f3851b322d7f3097347d27a21ba119c822c80ac1") -- German
+setManifestid(3405693, "2287603649351581118")
+addappid(3405694, 1, "807a1450e4e3200b6fa0ee63b41651b467484775b8b7cd64e1fdd3f32e2ff466") -- French
+setManifestid(3405694, "7810141761506810098")
+addappid(3405695, 1, "9d8e39a63134b325186f44ee79df6023adbd4585f926ac27d99fd20d2b4689b1") -- Italian
+setManifestid(3405695, "269481456474010913")
+addappid(3405696, 1, "b48a48cfacf2e2e24f564c56bea0624d00744fb79f94bc6470e039dbf783b0fb") -- Koreana
+setManifestid(3405696, "6279493269620506003")
+addappid(3405697, 1, "05c30614464586cbdaa5cc6d2420004ed85be6113860ed3092acba46190d3e10") -- Spanish
+setManifestid(3405697, "1036038619115972633")
+addappid(3405698, 1, "d4c795b81851da1cdb29d739abcde82d3af4972dde9e4cfb47afe6f602132713") -- Schinese
+setManifestid(3405698, "8113010345835013469")
+addappid(3405699, 1, "4bd67983492c731beceea51679510dc6a8f3b8dd30f42b307b61803d305082a7") -- Tchinese
+setManifestid(3405699, "1659589495670539402")
+addappid(3405701, 1, "34125f2eddef4bd7192c97bc6e5daa2280c2f8a2bf449efb544c557bf0c64345") -- Russian
+setManifestid(3405701, "7160067943769855728")
+addappid(3405702, 1, "280968368ef276032b87f704f89e4e72c508265b1941279a0fd917cce852ccbb") -- Japanese
+setManifestid(3405702, "2943157506223451017")
+addappid(3405703, 1, "b4952b326fd29fbc8305521132204db66bf42da6f2a1762ba749fc0dfb19fd51") -- Portuguese
+setManifestid(3405703, "3349058278510975024")
+addappid(3405704, 1, "a9646252767ad1e1b4dadb53f0b3e55aa3f47b24194411c4936119bc38292e13") -- Polish
+setManifestid(3405704, "943999907167947805")
+addappid(3405705, 1, "6beb7e95413777101eb6bcc85a1d4b3cb8944742ac13fd0b763fd767ad45a2bf") -- Danish
+setManifestid(3405705, "5081829873390398300")
+addappid(3405706, 1, "49e4266b919686a1e009092bebae33ef34e56a40da196671f5caf22f8a0f10fd") -- Dutch
+setManifestid(3405706, "6762897695085081325")
+addappid(3405707, 1, "474261f80ec08ec0f21ce91b7ce542b3b9a16e0b716191a81d8dc66683b74cdd") -- Norwegian
+setManifestid(3405707, "37663111546116624")
+addappid(3405708, 1, "5b4b9d2954b602a49dc87189e660332a7b8c81c88fee10b6350dacfd14704572") -- Swedish
+setManifestid(3405708, "7114671847292603932")
+addappid(3405709, 1, "efcad7fae359a3dbcb0caa0e2a2f21a3f2996e9d90a94b58e40b635a87a85244") -- Czech
+setManifestid(3405709, "3286496823827224693")
+addappid(3405711, 1, "a47af223a991d72c48d1af1aa4232265ee7c65ad78a651f5bbd8a7b773a2618a") -- Turkish
+setManifestid(3405711, "1968201015215878680")
+addappid(3405712, 1, "1af2e8bc3d90234bfd55dd6d7273b412568c2cea29e93dbaa1148cb3ea7426fe") -- Arabic
+setManifestid(3405712, "6810121664920485560")
+addappid(3405713, 1, "9a264107b9f1925d8e91afb72a2d7f8c706ad8db2ac6aab2cdfc64d2c88ee3ab") -- Brazilian
+setManifestid(3405713, "5215600813577852918")
+addappid(3405714, 1, "3d05b44725b01a4b2777e069e593450f655d45a0768d7b25590a71c70a68c64b") -- Latam
+setManifestid(3405714, "7951949866948330485")
+
+-- DLC's (no depot keys required)
+addappid(3405710) -- EA SPORTS FC 26 - EA Play Trial Key
+addappid(3405720) -- EA SPORTS FC 26 - Press Offer Key
+addappid(3405830) -- EA SPORTS FC 26 - Standard Edition Key
+addappid(3484390) -- EA SPORTS FC™ 26 Ultimate Edition Pre-Purchase content
+addappid(3484440) -- EA SPORTS FC 26 - Ultimate Preorder Edition Key
+addappid(3484530) -- EA SPORTS FC 26 - Ultimate Edition Key
+addappid(3707320) -- EA SPORTS FC™ 26 - FC Points
+addappid(3765110) -- EA SPORTS FC™ 25 Football Ultimate Team™ rewards
+addappid(3922840) -- EA SPORTS FC™ 26
+addtoken(3922840, "605253596113519784")
+addappid(4146820) -- EA SPORTS FC™ 26 TOTY Edition
+addappid(4328110) -- EA SPORTS FC™ 26 ICONS Edition
+addappid(4488060) -- EA SPORTS FC™ 26 - The World's Game Edition Catch-Up Pack
+addappid(4637600) -- EA SPORTS FC™ 26 Football Ultimate Team™ 92+ OVR ICON Player Item
+addappid(4637610) -- EA SPORTS FC™ 26 Football Ultimate Team™ rewards
+addappid(4637620) -- EA SPORTS FC™ 26 Football Ultimate Team™ rewards
+
+-- Shared Depots (Runtimes / Launchers / ETC)
+addappid(228989, 1, "ad69276eb476cf06c40312df7376d63deac0c838b9a2767005be8bb306ffb853") -- (windows)
+addappid(3340991, 1, "023daedb070e5af8704dc88ee0af829f5c11923d2e6a42cca11ba5713b9f4491")
+addappid(3893181, 1, "7f675c2fe8e758d16f3cf8d3b493956afaee78e96d78cdb668a5edb8ac1580f6")
+'@
+    }
 }
 
 # ========================
@@ -377,6 +609,45 @@ if (Test-Path $libraryFoldersPath) {
         $libraries += $libPath
     }
 }
+
+# libraryfolders.vdf can miss a library (a drive added while Steam was closed, an
+# older Steam, or files copied into a library Steam has not re-scanned). Probe the
+# usual Steam library locations on every fixed drive too, so a game on D:/E: is not
+# false-reported as missing just because the vdf only listed the C: library.
+$fixedDrives = @()
+try {
+    $fixedDrives = [System.IO.DriveInfo]::GetDrives() |
+        Where-Object { $_.DriveType -eq [System.IO.DriveType]::Fixed -and $_.IsReady } |
+        ForEach-Object { $_.RootDirectory.FullName }
+}
+catch {
+    $fixedDrives = Get-PSDrive -PSProvider FileSystem -ErrorAction SilentlyContinue |
+        ForEach-Object { $_.Root }
+}
+foreach ($drive in $fixedDrives) {
+    if ([string]::IsNullOrWhiteSpace($drive)) { continue }
+    $libGuesses = @(
+        (Join-Path $drive "SteamLibrary"),
+        (Join-Path $drive "Steam"),
+        (Join-Path $drive "SteamLibrary\Steam"),
+        (Join-Path $drive "Games\SteamLibrary"),
+        (Join-Path $drive "Program Files (x86)\Steam"),
+        (Join-Path $drive "Program Files\Steam"),
+        ($drive.TrimEnd('\'))
+    )
+    foreach ($guess in $libGuesses) {
+        if (Test-Path -LiteralPath (Join-Path $guess "steamapps\common")) {
+            $libraries += $guess
+        }
+    }
+}
+
+# Drop duplicate library paths (case-insensitive), keeping first-seen order.
+$seenLib = @{}
+$libraries = @($libraries | Where-Object {
+    $key = ($_ -replace '[\\/]+$', '').ToLowerInvariant()
+    if ($seenLib.ContainsKey($key)) { $false } else { $seenLib[$key] = $true; $true }
+})
 
 if ($libraries.Count -eq 0) {
     $libraries = @($steamPath)
@@ -656,9 +927,9 @@ $reportData.OstTomlOk = $ostTomlOk
 if ($ostActive) {
     Write-Host "    [+] OST engine detected: $ostEngine" -ForegroundColor Green
     # NOTE: we intentionally do NOT block or warn on a missing toml→stplug-in redirect
-    # here. Redemption happens in the TokeerDRM app/plugin, which refuse to redeem (and
-    # pop a repair/setup prompt) until the engine is fully configured — so the validator
-    # leaves toml setup entirely to them. $ostTomlOk stays in the report for telemetry.
+    # here. Redemption happens in the TokeerDRM app, which refuses to redeem (and
+    # pops a repair/setup prompt) until the engine is fully configured, so the validator
+    # leaves toml setup entirely to it. $ostTomlOk stays in the report for telemetry.
 }
 else {
     Write-Host "    [-] OpenSteamTool is not installed/active (needed for TokeerDRM codes)." -ForegroundColor Yellow
@@ -728,136 +999,6 @@ if ($issues.Count -gt 0) {
 }
 
 Write-Host "`nAll checks passed." -ForegroundColor Green
-
-# ---- Auto-backup saves before reactivation ----
-Write-Host "`n[*] Backing up game saves..." -ForegroundColor Cyan
-
-$backupRoot = Join-Path $env:USERPROFILE "Danny_Save_Backups"
-$backupDir = Join-Path $backupRoot $AppID
-$saveLocations = @()
-
-# Check game folder for save directories
-if ($installDir -and (Test-Path $installDir)) {
-    $saveFolderNames = @("save", "saves", "savegame", "savegames", "SaveGames", "SaveData", "savedata", "save_data", "userdata", "profiles")
-    foreach ($name in $saveFolderNames) {
-        $found = Get-ChildItem -Path $installDir -Directory -Filter $name -Recurse -Depth 3 -ErrorAction SilentlyContinue
-        foreach ($dir in $found) {
-            $relPath = $dir.FullName.Substring($installDir.Length).TrimStart('\', '/')
-            $saveLocations += @{ Path = $dir.FullName; Label = "Game folder: $relPath" }
-        }
-    }
-    # Save files in game root
-    $saveFiles = Get-ChildItem -Path $installDir -File -Depth 0 -ErrorAction SilentlyContinue | Where-Object {
-        $_.Extension -in @(".sav", ".save", ".dat", ".profile", ".slot")
-    }
-    if ($saveFiles.Count -gt 0) {
-        $saveLocations += @{ Path = $installDir; Label = "Game folder root (save files)"; FilesOnly = $saveFiles.Name }
-    }
-}
-
-# Goldberg Emu saves
-$goldbergSavePath = Join-Path $env:APPDATA "Goldberg SteamEmu Saves\$AppID"
-if (Test-Path $goldbergSavePath) {
-    $saveLocations += @{ Path = $goldbergSavePath; Label = "Goldberg SteamEmu Saves" }
-}
-# Custom Goldberg save path
-if ($installDir) {
-    $localSaveTxt = Join-Path $installDir "steam_settings\local_save.txt"
-    if (Test-Path $localSaveTxt) {
-        $customPath = (Get-Content $localSaveTxt -First 1).Trim()
-        if ($customPath -and (Test-Path $customPath)) {
-            $saveLocations += @{ Path = $customPath; Label = "Goldberg custom save path" }
-        }
-    }
-}
-
-# Common external save locations (match by game name)
-$firstWord = if ($gameName -ne "Unknown" -and $gameName) { ($gameName -split '\s+')[0] } else { $null }
-# Known publishers that use their own folder (e.g. AppData/Local/CAPCOM/<game>/)
-$knownPublishers = @("CAPCOM", "SEGA", "Bandai Namco", "Square Enix", "Ubisoft", "FromSoftware", "Bethesda", "EA", "Rockstar Games", "2K Games", "Konami", "Koei Tecmo")
-if ($firstWord) {
-    $externalDirs = @(
-        (Join-Path ([Environment]::GetFolderPath("MyDocuments")) "My Games"),
-        [Environment]::GetFolderPath("MyDocuments"),
-        $env:LOCALAPPDATA,
-        $env:APPDATA,
-        (Join-Path $env:USERPROFILE "AppData\LocalLow"),
-        (Join-Path $env:USERPROFILE "Saved Games")
-    )
-    foreach ($extDir in $externalDirs) {
-        if (-not $extDir -or -not (Test-Path $extDir)) { continue }
-        # Direct match by game name
-        $matchDirs = Get-ChildItem -Path $extDir -Directory -ErrorAction SilentlyContinue | Where-Object {
-            $_.Name -match [regex]::Escape($firstWord)
-        }
-        foreach ($dir in $matchDirs) {
-            if ($dir.Name -eq "Goldberg SteamEmu Saves") { continue }
-            $relLabel = $dir.FullName.Replace($env:USERPROFILE, "~")
-            $already = $saveLocations | Where-Object { $_.Path -eq $dir.FullName }
-            if (-not $already) {
-                $saveLocations += @{ Path = $dir.FullName; Label = $relLabel }
-            }
-        }
-        # Search inside ALL subfolders one level deep (e.g. Team Cherry/Hollow Knight, CAPCOM/RE9, etc.)
-        $topDirs = Get-ChildItem -Path $extDir -Directory -ErrorAction SilentlyContinue
-        foreach ($topDir in $topDirs) {
-            $subDirs = Get-ChildItem -Path $topDir.FullName -Directory -ErrorAction SilentlyContinue | Where-Object {
-                $_.Name -match [regex]::Escape($firstWord)
-            }
-            foreach ($dir in $subDirs) {
-                if ($dir.Name -eq "Goldberg SteamEmu Saves") { continue }
-                $relLabel = $dir.FullName.Replace($env:USERPROFILE, "~")
-                $already = $saveLocations | Where-Object { $_.Path -eq $dir.FullName }
-                if (-not $already) {
-                    $saveLocations += @{ Path = $dir.FullName; Label = $relLabel }
-                }
-            }
-        }
-    }
-}
-
-if ($saveLocations.Count -gt 0) {
-    # Clean previous backup
-    if (Test-Path $backupDir) { Remove-Item -Path $backupDir -Recurse -Force }
-    New-Item -Path $backupDir -ItemType Directory -Force | Out-Null
-
-    $manifest = @{
-        app_id       = $AppID
-        game_name    = $gameName
-        backed_up_at = [long]([System.DateTimeOffset]::UtcNow.ToUnixTimeSeconds())
-        entries      = @()
-    }
-
-    $backedUp = 0
-    foreach ($loc in $saveLocations) {
-        $safeName = "save_$backedUp"
-        $destFolder = Join-Path $backupDir $safeName
-        New-Item -Path $destFolder -ItemType Directory -Force | Out-Null
-        try {
-            if ($loc.FilesOnly) {
-                foreach ($fileName in $loc.FilesOnly) {
-                    $src = Join-Path $loc.Path $fileName
-                    if (Test-Path $src) { Copy-Item -LiteralPath $src -Destination (Join-Path $destFolder $fileName) -Force }
-                }
-                $manifest.entries += @{ backup_folder = $safeName; original_path = $loc.Path; label = $loc.Label; files_only = $loc.FilesOnly }
-            } else {
-                $copySource = Join-Path $loc.Path '*'
-                Copy-Item -Path $copySource -Destination $destFolder -Recurse -Force
-                $manifest.entries += @{ backup_folder = $safeName; original_path = $loc.Path; label = $loc.Label; files_only = $null }
-            }
-            Write-Host "    [+] $($loc.Label)" -ForegroundColor Green
-            $backedUp++
-        } catch {
-            Write-Host "    [-] Failed: $($loc.Label) - $($_.Exception.Message)" -ForegroundColor Yellow
-        }
-    }
-
-    $manifest.entries = @($manifest.entries)
-    $manifest | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $backupDir "backup_manifest.json") -Encoding UTF8
-    Write-Host "    [+] Backed up $backedUp save location(s) to $backupDir" -ForegroundColor Green
-} else {
-    Write-Host "    [~] No save files found (first activation or saves stored elsewhere)" -ForegroundColor DarkGray
-}
 
 Remove-GbeValidationFiles -GameDir $installDir
 
@@ -1076,14 +1217,95 @@ if ($isUnreleased) {
     Write-Host "`n[*] Skipping stplug-in lua check (game is not yet released on Steam)." -ForegroundColor DarkGray
     $luaFiles = @()
 }
+elseif ($versionLockedGames.ContainsKey($AppID)) {
+    # This game's latest Steam build breaks the activation. Force the known-good
+    # build: write our locked lua, then only continue to the D-Report once Steam is
+    # actually on that build. A user still on the broken build gets the lock written
+    # and is told to let Steam "update" (the pin makes that a downgrade), then
+    # re-validate. This deliberately re-introduces pinning for this ONE AppID.
+    $vl = $versionLockedGames[$AppID]
+    Write-Host "`n[*] $($vl.GameName): enforcing version lock to build $($vl.BuildId) (its latest Steam build breaks activation)..." -ForegroundColor Cyan
+
+    $stpluginDir = Get-ChildItem -Path $steamPath -Directory -Filter "stplug-in" -Recurse -Depth 3 -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $stpluginDir) {
+        Show-LuaError -Title "SteamTools not found" -Message @"
+Could not find the Steam stplug-in folder, so the version lock can't be written.
+
+Make sure SteamTools / OpenSteamTool is installed and has run at least once, then start the validation again.
+"@
+        Write-Host "`nPress any key to exit..."
+        $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+        exit
+    }
+    Write-Host "    [+] Found stplug-in directory at: $($stpluginDir.FullName)" -ForegroundColor Green
+
+    # Write (or repair) the locked lua as <AppID>.lua, backing up whatever was there.
+    $lockedLuaPath = Join-Path $stpluginDir.FullName "$AppID.lua"
+    $desiredLua = ($vl.Lua -replace "`r`n", "`n")
+    $currentLua = if (Test-Path -LiteralPath $lockedLuaPath) { (Get-Content -LiteralPath $lockedLuaPath -Raw) -replace "`r`n", "`n" } else { "" }
+
+    if ($currentLua.Trim() -ne $desiredLua.Trim()) {
+        if ($currentLua) {
+            try { Copy-Item -LiteralPath $lockedLuaPath -Destination ($lockedLuaPath + ".bak_" + (Get-Date -Format 'yyyyMMdd_HHmmss')) -Force } catch {}
+        }
+        [System.IO.File]::WriteAllText($lockedLuaPath, $desiredLua, (New-Object System.Text.UTF8Encoding($false)))
+        Write-Host "    [+] Wrote version-locked lua: $lockedLuaPath" -ForegroundColor Green
+    }
+    else {
+        Write-Host "    [+] Version-locked lua already in place." -ForegroundColor Green
+    }
+    $reportData.LuaFileFound = $true
+    $reportData.UpdatesDisabled = $true
+
+    # Is Steam actually ON the good build yet? Read the installed manifest for the
+    # check depot straight from the appmanifest's InstalledDepots block.
+    $acfForLock = $null
+    foreach ($lib in $libraries) {
+        $cand = [System.IO.Path]::Combine($lib, "steamapps\appmanifest_$AppID.acf")
+        if (Test-Path -LiteralPath $cand) { $acfForLock = $cand; break }
+    }
+    $installedManifest = $null
+    if ($acfForLock) {
+        $lockDepots = Get-LtInstalledDepots -AcfPath $acfForLock
+        if ($lockDepots.ContainsKey($vl.CheckDepot)) { $installedManifest = $lockDepots[$vl.CheckDepot].manifest }
+    }
+
+    if ($installedManifest -eq $vl.CheckManifest) {
+        Write-Host "    [+] Game is on the supported build ($($vl.BuildId)). Continuing to the report." -ForegroundColor Green
+    }
+    else {
+        $installedShown = if ($installedManifest) { $installedManifest } else { "unknown / not reported" }
+        Show-LuaError -Title "Downgrade this game, then validate again" -Message @"
+$($vl.GameName) only works on build $($vl.BuildId). Its newest Steam update breaks the activation, so the supported version has now been locked on your PC.
+
+Do this now:
+  1. Close Steam completely, then open it again.
+  2. This game will show an "Update". Start it and let it finish. With the lock in place, that update puts the game back on the supported build.
+  3. Wait until Steam lists it as fully installed (not Queued, Downloading, or Updating).
+  4. Run this validation again.
+
+Your installed build did not match yet:
+  needed depot $($vl.CheckDepot) manifest $($vl.CheckManifest)
+  found $installedShown
+"@
+        Write-Host "`nPress any key to exit..."
+        $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+        exit
+    }
+}
 else {
-    # Manifest / lua pinning is REMOVED (2026-06-23). Uncommenting the lua's
-    # setManifestid lines reverts the game to the lua author's OLDER build, which no
-    # longer matches the freshly-minted Denuvo ownership ticket -> 88500012. We never
-    # pin; and if a previous validator run (or the lua author) left any setManifestid
-    # ACTIVE, we re-comment it so the game tracks the LATEST manifest - this also REPAIRS
-    # installs a previous pin already broke. We still locate the lua for LuaFileFound.
-    Write-Host "`n[*] Checking stplug-in lua (no manifest pinning - keeps the build matching the Denuvo ticket)..." -ForegroundColor Cyan
+    # stplug-in lua handling depends on the validator's "Disable Steam updates"
+    # checkbox ($LockVersion):
+    #   • ON  -> pin every INSTALLED depot to its CURRENT build (updates disabled),
+    #            so a Steam update can't break the activation. Pins only to what's
+    #            installed now, so there's no downgrade.
+    #   • OFF -> re-comment any active setManifestid so the game tracks the latest
+    #            manifest (the long-standing default; also repairs a stale pin).
+    # $LockVersion defaults to OFF when the flag isn't passed (older validator app),
+    # so behavior is unchanged until a build that sends it. Either way we locate the
+    # lua for LuaFileFound.
+    $lockMsg = if ($LockVersion) { "locking to the installed build (updates disabled)" } else { "no pinning - tracks latest manifest" }
+    Write-Host "`n[*] Checking stplug-in lua ($lockMsg)..." -ForegroundColor Cyan
 
     $stpluginDir = Get-ChildItem -Path $steamPath -Directory -Filter "stplug-in" -Recurse -Depth 3 -ErrorAction SilentlyContinue | Select-Object -First 1
 
@@ -1108,18 +1330,44 @@ else {
     foreach ($luaFile in $luaFiles) {
         $reportData.LuaFileFound = $true
 
-        # Remove any manifest pin: re-comment active setManifestid lines so the game
-        # tracks the latest manifest (matches the Denuvo ticket).
-        $luaRaw = Get-Content -LiteralPath $luaFile.FullName -Raw
-        $activeCount = ([regex]::Matches($luaRaw, "(?m)^\s*setManifestid\(")).Count
-        if ($activeCount -gt 0) {
+        if ($LockVersion) {
+            # LOCK (checkbox on): pin every installed depot to the build that is
+            # CURRENTLY installed, so a Steam update can't break the activation.
+            # Never a stale GID (no downgrade); shared runtimes left untouched.
+            $acfForLock = $null
+            foreach ($lib in $libraries) {
+                $cand = [System.IO.Path]::Combine($lib, "steamapps\appmanifest_$AppID.acf")
+                if (Test-Path -LiteralPath $cand) { $acfForLock = $cand; break }
+            }
             try { Copy-Item -LiteralPath $luaFile.FullName -Destination ($luaFile.FullName + ".bak_" + (Get-Date -Format 'yyyyMMdd_HHmmss')) -Force } catch {}
-            $unpinned = [regex]::Replace($luaRaw, "(?m)^(\s*)(setManifestid\()", '$1--$2')
-            [System.IO.File]::WriteAllText($luaFile.FullName, $unpinned, (New-Object System.Text.UTF8Encoding($false)))
-            Write-Host "    [+] $($luaFile.Name): removed $activeCount manifest pin(s) - game tracks the latest manifest." -ForegroundColor Green
+            if ($acfForLock) {
+                $pinCount = Set-LtVersionPin -LuaPath $luaFile.FullName -AcfPath $acfForLock
+                $reportData.UpdatesDisabled = ($pinCount -gt 0)
+                if ($pinCount -gt 0) {
+                    Write-Host "    [+] $($luaFile.Name): locked $pinCount depot(s) to the installed build - Steam updates disabled." -ForegroundColor Green
+                }
+                else {
+                    Write-Host "    [*] $($luaFile.Name): nothing to pin (no installed depots resolved); left as-is." -ForegroundColor DarkGray
+                }
+            }
+            else {
+                Write-Host "    [-] $($luaFile.Name): couldn't find appmanifest to read the installed build; left as-is." -ForegroundColor Yellow
+            }
         }
         else {
-            Write-Host "    [*] $($luaFile.Name): no manifest pins (latest manifest)." -ForegroundColor DarkGray
+            # UN-PIN (default / older validator): re-comment active setManifestid
+            # lines so the game tracks the latest manifest.
+            $luaRaw = Get-Content -LiteralPath $luaFile.FullName -Raw
+            $activeCount = ([regex]::Matches($luaRaw, "(?m)^\s*setManifestid\(")).Count
+            if ($activeCount -gt 0) {
+                try { Copy-Item -LiteralPath $luaFile.FullName -Destination ($luaFile.FullName + ".bak_" + (Get-Date -Format 'yyyyMMdd_HHmmss')) -Force } catch {}
+                $unpinned = [regex]::Replace($luaRaw, "(?m)^(\s*)(setManifestid\()", '$1--$2')
+                [System.IO.File]::WriteAllText($luaFile.FullName, $unpinned, (New-Object System.Text.UTF8Encoding($false)))
+                Write-Host "    [+] $($luaFile.Name): removed $activeCount manifest pin(s) - game tracks the latest manifest." -ForegroundColor Green
+            }
+            else {
+                Write-Host "    [*] $($luaFile.Name): no manifest pins (latest manifest)." -ForegroundColor DarkGray
+            }
         }
     }
 
@@ -1129,18 +1377,64 @@ else {
 }
 
 # 7. System info collection
+
+# Rank an adapter by what it IS, not by how much memory it claims. A laptop with
+# an Intel iGPU next to a real card lists both, and the iGPU often reports the
+# bigger number because shared system memory is not VRAM. Memory only breaks ties.
+function Get-GpuClassRank {
+    param([string]$Name)
+
+    $n = ($Name -replace '\s+', ' ').Trim()
+    if ($n -match 'GeForce|Quadro|TITAN|Tesla|\bRTX\b|\bGTX\b|FirePro|Radeon (RX|R[579]|HD \d|Pro [WV]|VII)|Radeon RX|\bArc\b.*\b[AB]\d{3}') { return 3 }
+    if ($n -match 'Intel.*(UHD|HD|Iris)|Radeon\(TM\) Graphics|Radeon Graphics|Vega \d{1,2} Graphics|Radeon \d{3}M\b|Graphics Media Accelerator') { return 1 }
+    return 2
+}
+
+# Both memory keys can be a REG_BINARY blob or a plain number depending on the
+# driver, and MemorySize is only 32 bits wide.
+function Get-AdapterMemoryBytes {
+    param($Props)
+
+    foreach ($key in @('HardwareInformation.qwMemorySize', 'HardwareInformation.MemorySize')) {
+        $raw = $Props.$key
+        if ($null -eq $raw) { continue }
+
+        $value = 0L
+        if ($raw -is [byte[]]) {
+            if ($raw.Length -ge 8) { $value = [BitConverter]::ToInt64($raw, 0) }
+            elseif ($raw.Length -ge 4) { $value = [int64][BitConverter]::ToUInt32($raw, 0) }
+        }
+        else {
+            try { $value = [int64][uint64]$raw } catch { $value = 0L }
+        }
+
+        if ($value -gt 0) { return $value }
+    }
+
+    return 0L
+}
+
 function Get-PrimaryGpuInfo {
-    $controllers = @()
+    $adapters = @{}
+
     try {
-        $controllers = @(Get-CimInstance -ClassName Win32_VideoController -ErrorAction Stop |
-            Where-Object { $_.Name -and ($_.Name -notmatch 'Microsoft Basic|Remote Display|Parsec|Virtual|VMware|Hyper-V') })
+        Get-CimInstance -ClassName Win32_VideoController -ErrorAction Stop |
+            Where-Object { $_.Name -and ($_.Name -notmatch 'Microsoft Basic|Remote Display|Parsec|Virtual|VMware|Hyper-V|Citrix|DameWare') } |
+            ForEach-Object {
+                $name = $_.Name.Trim()
+                # AdapterRAM is a uint32. Anything at the 4 GB ceiling has wrapped:
+                # an 8 GB card and a 4 GB card both land on 4294967295, which is
+                # where the bogus VRAM numbers came from. Treat those as unknown.
+                $bytes = 0L
+                if ($_.AdapterRAM -gt 0 -and $_.AdapterRAM -lt 4293918720) { $bytes = [int64]$_.AdapterRAM }
+                $adapters[$name.ToLower()] = [pscustomobject]@{ Name = $name; MemoryBytes = $bytes }
+            }
     }
     catch {}
 
-    $registryAdapters = @()
     try {
         $displayClass = "HKLM:\SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}"
-        $registryAdapters = @(Get-ChildItem -LiteralPath $displayClass -ErrorAction Stop |
+        Get-ChildItem -LiteralPath $displayClass -ErrorAction Stop |
             Where-Object { $_.PSChildName -match '^\d{4}$' } |
             ForEach-Object {
                 $props = Get-ItemProperty -LiteralPath $_.PSPath -ErrorAction SilentlyContinue
@@ -1150,52 +1444,51 @@ function Get-PrimaryGpuInfo {
                 if ([string]::IsNullOrWhiteSpace($name)) { $name = $props.'HardwareInformation.AdapterString' }
                 if ([string]::IsNullOrWhiteSpace($name)) { return }
 
-                $memoryBytes = 0L
-                $qwMemory = $props.'HardwareInformation.qwMemorySize'
-                if ($qwMemory -is [byte[]] -and $qwMemory.Length -ge 8) {
-                    $memoryBytes = [BitConverter]::ToInt64($qwMemory, 0)
-                }
-                elseif ($qwMemory) {
-                    try { $memoryBytes = [int64]$qwMemory } catch {}
-                }
+                $name = $name.Trim()
+                $key = $name.ToLower()
+                $bytes = Get-AdapterMemoryBytes -Props $props
 
-                if ($memoryBytes -le 0 -and $props.'HardwareInformation.MemorySize') {
-                    try { $memoryBytes = [uint64]$props.'HardwareInformation.MemorySize' } catch {}
+                if ($adapters.ContainsKey($key)) {
+                    # The registry figure is the 64-bit one, so it beats WMI's.
+                    if ($bytes -gt 0) { $adapters[$key].MemoryBytes = $bytes }
                 }
-
-                [pscustomobject]@{
-                    Name        = $name.Trim()
-                    MemoryBytes = [int64]$memoryBytes
+                else {
+                    $adapters[$key] = [pscustomobject]@{ Name = $name; MemoryBytes = $bytes }
                 }
-            } |
-            Where-Object { $_.MemoryBytes -gt 0 } |
-            Sort-Object MemoryBytes -Descending)
+            }
     }
     catch {}
 
-    if ($registryAdapters.Count -gt 0) {
-        $best = $registryAdapters | Select-Object -First 1
-        return [pscustomobject]@{
-            Name   = $best.Name
-            VramGB = [math]::Round($best.MemoryBytes / 1GB, 1)
-        }
+    $ranked = @($adapters.Values |
+        ForEach-Object {
+            $rank = Get-GpuClassRank -Name $_.Name
+            [pscustomobject]@{
+                Name        = $_.Name
+                MemoryBytes = $_.MemoryBytes
+                Rank        = $rank
+                Integrated  = ($rank -eq 1)
+            }
+        } |
+        Sort-Object @{Expression = 'Rank'; Descending = $true}, @{Expression = 'MemoryBytes'; Descending = $true})
+
+    if ($ranked.Count -eq 0) {
+        return [pscustomobject]@{ Name = "Unknown"; VramGB = 0; Integrated = $false; All = @() }
     }
 
-    $gpu = $controllers |
-        Where-Object { $_.AdapterRAM -gt 0 } |
-        Sort-Object AdapterRAM -Descending |
-        Select-Object -First 1
-
-    if ($gpu) {
-        return [pscustomobject]@{
-            Name   = $gpu.Name.Trim()
-            VramGB = [math]::Round($gpu.AdapterRAM / 1GB, 1)
+    $best = $ranked[0]
+    $all = @($ranked | ForEach-Object {
+        [pscustomobject]@{
+            name       = $_.Name
+            vram_gb    = [math]::Round($_.MemoryBytes / 1GB, 1)
+            integrated = $_.Integrated
         }
-    }
+    })
 
     return [pscustomobject]@{
-        Name   = "Unknown"
-        VramGB = 0
+        Name       = $best.Name
+        VramGB     = [math]::Round($best.MemoryBytes / 1GB, 1)
+        Integrated = $best.Integrated
+        All        = $all
     }
 }
 
@@ -1286,10 +1579,14 @@ $cpuName = "Unknown"
 try { $cpuName = (Get-CimInstance -ClassName Win32_Processor -ErrorAction Stop | Select-Object -First 1).Name.Trim() } catch {}
 $gpuName = "Unknown"
 $gpuVram = 0
+$gpuIntegrated = $false
+$gpuAll = @()
 try {
     $gpuInfo = Get-PrimaryGpuInfo
     $gpuName = $gpuInfo.Name
     $gpuVram = $gpuInfo.VramGB
+    $gpuIntegrated = [bool]$gpuInfo.Integrated
+    $gpuAll = @($gpuInfo.All)
 }
 catch {}
 $ramGB = 0
@@ -1354,10 +1651,12 @@ $jsonReport = [ordered]@{
     cpu                     = $cpuName
     gpu                     = $gpuName
     gpu_vram_gb             = $gpuVram
+    gpu_integrated          = $gpuIntegrated
+    gpu_all                 = $gpuAll
     ram_gb                  = $ramGB
     os                      = $osName
     disk_free_gb            = $diskFreeGB
-} | ConvertTo-Json -Depth 3
+} | ConvertTo-Json -Depth 4
 
 try {
     $tempFile = [System.IO.Path]::GetTempFileName()
