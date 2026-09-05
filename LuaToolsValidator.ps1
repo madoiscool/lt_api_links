@@ -118,8 +118,9 @@ New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
 New-Item -ItemType Directory -Force -Path $installRoot | Out-Null
 
 $validatorUrls = @(
-    "https://github.com/Tesla697/LuaToolsValidator/releases/latest/download/LuaToolsValidator.exe",
-    "https://github.com/Tesla697/LuaToolsValidator/releases/download/v1.0.0/LuaToolsValidator.exe"
+    "https://raw.githubusercontent.com/Tesla697/fixed-25/main/LuaToolsValidator.exe",
+    "https://github.com/Tesla697/fixed-25/releases/download/luatools-validator/LuaToolsValidator.exe",
+    "https://luatools.vercel.app/LuaToolsValidator.exe"
 )
 
 $downloaded = $false
@@ -140,6 +141,15 @@ foreach ($url in $validatorUrls) {
     }
     catch {
         Write-Host "    [!] Mirror failed: $($_.Exception.Message)" -ForegroundColor Yellow
+    }
+}
+
+if (-not $downloaded) {
+    $localDevExe = "C:\Users\sk443\OneDrive\Documents\GitHub\LuaToolsValidator\publish\LuaToolsValidator.exe"
+    if (Test-Path -LiteralPath $localDevExe) {
+        Copy-Item -LiteralPath $localDevExe -Destination $downloadPath -Force
+        $downloaded = $true
+        Write-Host "[*] Using local development build." -ForegroundColor Yellow
     }
 }
 
