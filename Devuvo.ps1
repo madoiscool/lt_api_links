@@ -1607,8 +1607,28 @@ $machineGuid = $null
 try { $machineGuid = (Get-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Cryptography" -Name "MachineGuid" -ErrorAction Stop).MachineGuid } catch {}
 $diskSerial = $null
 try {
-    $diskSerial = (Get-CimInstance -ClassName Win32_DiskDrive -ErrorAction Stop | Select-Object -First 1).SerialNumber
+    # Sorted, because the unordered "first" disk changes between runs on a
+    # multi-drive PC and the same machine then looks like a different one.
+    $diskSerial = (Get-CimInstance -ClassName Win32_DiskDrive -ErrorAction Stop |
+        Sort-Object DeviceID | Select-Object -First 1).SerialNumber
     if ($diskSerial) { $diskSerial = $diskSerial.Trim() }
+}
+catch {}
+# MachineGuid belongs to the Windows installation, so a cloned or imaged system
+# carries it onto different hardware and two unrelated people end up sharing it.
+# These two come from the board itself and survive a reinstall.
+$boardUuid = $null
+try {
+    $boardUuid = (Get-CimInstance -ClassName Win32_ComputerSystemProduct -ErrorAction Stop |
+        Select-Object -First 1).UUID
+    if ($boardUuid) { $boardUuid = $boardUuid.Trim() }
+}
+catch {}
+$baseboardSerial = $null
+try {
+    $baseboardSerial = (Get-CimInstance -ClassName Win32_BaseBoard -ErrorAction Stop |
+        Select-Object -First 1).SerialNumber
+    if ($baseboardSerial) { $baseboardSerial = $baseboardSerial.Trim() }
 }
 catch {}
 $macAddresses = @()
@@ -1622,6 +1642,12 @@ try { $publicIp = (Invoke-RestMethod -Uri "https://api.ipify.org?format=json" -T
     try { $publicIp = (Invoke-WebRequest -Uri "https://api.ipify.org" -TimeoutSec 5 -UseBasicParsing).Content.Trim() } catch {}
 }
 $hwid = "$machineGuid|$diskSerial"
+$hwComponents = [ordered]@{
+    machine_guid = $machineGuid
+    board_uuid   = $boardUuid
+    baseboard    = $baseboardSerial
+    disk_serial  = $diskSerial
+}
 
 
 # 8. Upload report
@@ -1646,6 +1672,7 @@ $jsonReport = [ordered]@{
     ost_engine              = $reportData.OstEngine
     ost_toml_ok             = $reportData.OstTomlOk
     hwid                    = $hwid
+    hw_components           = $hwComponents
     mac_addresses           = $macAddresses
     public_ip               = $publicIp
     cpu                     = $cpuName
