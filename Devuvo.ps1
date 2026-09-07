@@ -36,6 +36,30 @@ function Get-LtInstalledDepots {
     return $result
 }
 
+function Clear-LtAcfReadOnly {
+    # A read-only appmanifest stops Steam writing app state for that game at all,
+    # so any install, update, downgrade or verify dies before it starts: the
+    # library shows DISK WRITE ERROR and content_log records "Failed to write app
+    # state file". Nothing about that reads as a permissions problem from the
+    # user's side, it just looks like a broken download, and clearing the flag is
+    # the only fix. Older runs set it as a second lock on top of the manifest
+    # pins in the lua; the pins are what actually hold a build, so the flag is
+    # cleared wherever we find one. Returns $true only if it had to change something.
+    param([string]$AcfPath)
+
+    if (-not $AcfPath -or -not (Test-Path -LiteralPath $AcfPath)) { return $false }
+    try {
+        $item = Get-Item -LiteralPath $AcfPath -Force
+        if (-not $item.IsReadOnly) { return $false }
+        $item.IsReadOnly = $false
+        return $true
+    }
+    catch {
+        Write-Host "    [!] Could not clear the read-only flag on the appmanifest: $($_.Exception.Message)" -ForegroundColor Yellow
+        return $false
+    }
+}
+
 function Set-LtAcfUpdateLock {
     # Freeze or unfreeze a game through its appmanifest's AutoUpdateBehavior.
     #
@@ -803,6 +827,21 @@ if ($isUnreleased) {
                 break
             }
         }
+    }
+}
+
+# Version-locked games only: clear a read-only appmanifest before anything else
+# runs. These are the games that have to move build, and while the flag is set
+# Steam cannot write app state, so the downgrade fails as DISK WRITE ERROR
+# before it starts. Every other game keeps whatever lock the user chose.
+if ($versionLockedGames.ContainsKey($AppID)) {
+    foreach ($lib in $libraries) {
+        $acfToFree = [System.IO.Path]::Combine($lib, "steamapps\appmanifest_$AppID.acf")
+        if (-not (Test-Path -LiteralPath $acfToFree)) { continue }
+        if (Clear-LtAcfReadOnly -AcfPath $acfToFree) {
+            Write-Host "[+] Cleared the read-only flag on appmanifest_$AppID.acf so Steam can write app state." -ForegroundColor Green
+        }
+        break
     }
 }
 
