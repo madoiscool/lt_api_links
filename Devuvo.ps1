@@ -36,6 +36,45 @@ function Get-LtInstalledDepots {
     return $result
 }
 
+function Set-LtAcfUpdateLock {
+    # Freeze or unfreeze a game through its appmanifest, the same pair of switches
+    # the validator wrapper uses: AutoUpdateBehavior, plus the read-only flag that
+    # stops Steam rewriting the file at all.
+    #
+    # The read-only half is absolute. While it is set Steam cannot write app state
+    # for that game, so no download can even start: the library reports DISK WRITE
+    # ERROR and content_log records "Failed to write app state file". That is
+    # exactly what we want while a build is frozen, and exactly what has to come
+    # off before a version-lock downgrade can run.
+    param([string]$AcfPath, [bool]$Lock)
+
+    if (-not $AcfPath -or -not (Test-Path -LiteralPath $AcfPath)) { return $false }
+    try {
+        # Always clear read-only first: the file has to be writable to edit it,
+        # whichever way we are about to set it.
+        $item = Get-Item -LiteralPath $AcfPath -Force
+        if ($item.IsReadOnly) { $item.IsReadOnly = $false }
+
+        $behavior = if ($Lock) { '1' } else { '0' }
+        $text = [System.IO.File]::ReadAllText($AcfPath)
+        if ($text -match '"AutoUpdateBehavior"\s+"\d+"') {
+            $text = [regex]::Replace($text, '("AutoUpdateBehavior"\s+")\d+(")', ('${1}' + $behavior + '${2}'))
+        }
+        else {
+            $text = [regex]::Replace($text, '("appid"\s+"\d+"\s*\r?\n)',
+                ('${1}' + "`t`"AutoUpdateBehavior`"`t`t`"$behavior`"`r`n"), 1)
+        }
+        [System.IO.File]::WriteAllText($AcfPath, $text, (New-Object System.Text.UTF8Encoding($false)))
+
+        if ($Lock) { (Get-Item -LiteralPath $AcfPath -Force).IsReadOnly = $true }
+        return $true
+    }
+    catch {
+        Write-Host "    [!] Could not change the update lock on the appmanifest: $($_.Exception.Message)" -ForegroundColor Yellow
+        return $false
+    }
+}
+
 function Set-LtVersionPin {
     # Pin every INSTALLED depot to its currently-installed manifest (never a stale
     # GID that would downgrade the game); leave shared-runtime depots (not in
@@ -1340,34 +1379,6 @@ Make sure SteamTools / OpenSteamTool is installed and has run at least once, the
         if (Test-Path -LiteralPath $cand) { $acfForLock = $cand; break }
     }
 
-    # A game that has had "Disable Steam updates" applied carries a READ-ONLY
-    # appmanifest, and Steam cannot write app state at all while that flag is set.
-    # The downgrade then dies the moment it starts: the library shows DISK WRITE
-    # ERROR and content_log records "Failed to write app state file". Nothing about
-    # it looks like a permissions problem from the user's side, so it reads as a
-    # broken download. The lua pin is what holds the build now, so the flag has no
-    # job left and has to come off before anyone can be asked to run the update.
-    # AutoUpdateBehavior goes back to 0 for the same reason: left at 1 the update
-    # sits in Unscheduled as "update on launch" and never starts on its own.
-    if ($acfForLock) {
-        try {
-            $acfItem = Get-Item -LiteralPath $acfForLock -Force
-            if ($acfItem.IsReadOnly) {
-                $acfItem.IsReadOnly = $false
-                Write-Host "    [+] Cleared the read-only flag on appmanifest_$AppID.acf (Steam could not have written the update)." -ForegroundColor Green
-            }
-            $acfText = [System.IO.File]::ReadAllText($acfForLock)
-            if ($acfText -match '"AutoUpdateBehavior"\s+"[^0]"') {
-                $acfText = [regex]::Replace($acfText, '("AutoUpdateBehavior"\s+")\d+(")', '${1}0${2}')
-                [System.IO.File]::WriteAllText($acfForLock, $acfText, (New-Object System.Text.UTF8Encoding($false)))
-                Write-Host "    [+] Re-enabled normal update scheduling for this game so the downgrade can run." -ForegroundColor Green
-            }
-        }
-        catch {
-            Write-Host "    [!] Could not clear the update lock on the appmanifest: $($_.Exception.Message)" -ForegroundColor Yellow
-        }
-    }
-
     $installedManifest = $null
     if ($acfForLock) {
         $lockDepots = Get-LtInstalledDepots -AcfPath $acfForLock
@@ -1376,9 +1387,32 @@ Make sure SteamTools / OpenSteamTool is installed and has run at least once, the
 
     if ($installedManifest -eq $vl.CheckManifest) {
         Write-Host "    [+] Game is on the supported build ($($vl.BuildId)). Continuing to the report." -ForegroundColor Green
+
+        # On the right build, so put the freeze back. The downgrade needed the
+        # appmanifest writable, but now that it is done the lua pin should not be
+        # the only thing holding the build: if anything ever resets that lua, a
+        # writable manifest lets Steam pull the game straight forward again onto
+        # the build that breaks the activation. Re-locking here restores the
+        # second line of defence without ever having blocked the downgrade.
+        if ($acfForLock -and (Set-LtAcfUpdateLock -AcfPath $acfForLock -Lock $true)) {
+            Write-Host "    [+] Re-froze this game at the supported build (Steam updates locked again)." -ForegroundColor Green
+        }
     }
     else {
         $installedShown = if ($installedManifest) { $installedManifest } else { "unknown / not reported" }
+
+        # Not on the build yet, so the freeze has to come off or the download
+        # cannot even start. A game that has had "Disable Steam updates" applied
+        # carries a READ-ONLY appmanifest, and Steam cannot write app state while
+        # that is set: the library shows DISK WRITE ERROR and content_log records
+        # "Failed to write app state file". Nothing about that looks like a
+        # permissions problem from the user's side, it just reads as a broken
+        # download. AutoUpdateBehavior goes back to 0 at the same time, or the
+        # update sits in Unscheduled as "update on launch" and never starts.
+        # The next run re-locks it, once the game is confirmed on the good build.
+        if ($acfForLock -and (Set-LtAcfUpdateLock -AcfPath $acfForLock -Lock $false)) {
+            Write-Host "    [+] Unlocked the appmanifest so Steam can run the downgrade." -ForegroundColor Green
+        }
 
         # No Steam restart here on purpose. Saving the lua above is already seen by
         # SteamTools while Steam runs, and that is what makes the Update appear.
