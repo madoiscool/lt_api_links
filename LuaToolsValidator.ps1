@@ -21,6 +21,12 @@ if ((-not $LuaToolsInstallOnly) -and (-not $AppID -or [string]::IsNullOrWhiteSpa
 # its appmanifest_<appid>.acf (AutoUpdateBehavior = 1, i.e. update on launch
 # only) and marking the manifest read-only so Steam can't silently update it.
 # ---------------------------------------------------------------------------
+
+# Games Devuvo.ps1 version-locks to an older build. These are held on their build
+# by the manifest pin in the lua, and the downgrade needs Steam to be able to
+# write app state, so they never get the read-only flag: with it set the download
+# fails as DISK WRITE ERROR. Keep in sync with $versionLockedGames in Devuvo.ps1.
+$versionLockedAppIds = @('3405690', '3751950')
 function Get-SteamPath {
     foreach ($k in @('HKCU:\Software\Valve\Steam',
                      'HKLM:\SOFTWARE\WOW6432Node\Valve\Steam',
@@ -65,8 +71,10 @@ function Set-SteamUpdateLock {
         Write-Host "[!] appmanifest_$AppID.acf not found - is the game installed through Steam?" -ForegroundColor Yellow
         return
     }
+    $versionLocked = $versionLockedAppIds -contains "$AppID"
     try {
-        # Clear read-only so we can edit the file.
+        # Clear read-only so we can edit the file. On a version-locked game it
+        # stays cleared, which also repairs anyone an older run left stuck.
         $file = Get-Item -LiteralPath $acf
         if ($file.IsReadOnly) { $file.IsReadOnly = $false }
 
@@ -82,7 +90,7 @@ function Set-SteamUpdateLock {
         Set-Content -LiteralPath $acf -Value $text -Encoding UTF8 -NoNewline
 
         if ($Lock) {
-            (Get-Item -LiteralPath $acf).IsReadOnly = $true
+            if (-not $versionLocked) { (Get-Item -LiteralPath $acf).IsReadOnly = $true }
             Write-Host "[+] Steam updates LOCKED for AppID $AppID" -ForegroundColor Green
             Write-Host "    $acf" -ForegroundColor DarkGray
             Write-Host "    The game is frozen at its current build, so a Steam update can't break the activation." -ForegroundColor DarkGray

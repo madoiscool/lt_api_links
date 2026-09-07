@@ -37,21 +37,21 @@ function Get-LtInstalledDepots {
 }
 
 function Set-LtAcfUpdateLock {
-    # Freeze or unfreeze a game through its appmanifest, the same pair of switches
-    # the validator wrapper uses: AutoUpdateBehavior, plus the read-only flag that
-    # stops Steam rewriting the file at all.
+    # Freeze or unfreeze a game through its appmanifest's AutoUpdateBehavior.
     #
-    # The read-only half is absolute. While it is set Steam cannot write app state
-    # for that game, so no download can even start: the library reports DISK WRITE
-    # ERROR and content_log records "Failed to write app state file". That is
-    # exactly what we want while a build is frozen, and exactly what has to come
-    # off before a version-lock downgrade can run.
+    # The read-only flag is never used on a version-locked game, and this always
+    # clears it. While it is set Steam cannot write app state at all, so no
+    # download can start: the library reports DISK WRITE ERROR and content_log
+    # records "Failed to write app state file". Nothing about that reads as a
+    # permissions problem from the user's side. A version-locked game is held on
+    # its build by the manifest pin in the lua, which does not need the file
+    # frozen, so the read-only flag buys nothing here and costs a broken-looking
+    # download. Older runs (and the wrapper) may have set it, so clearing it on
+    # every call is also the repair for anyone already stuck.
     param([string]$AcfPath, [bool]$Lock)
 
     if (-not $AcfPath -or -not (Test-Path -LiteralPath $AcfPath)) { return $false }
     try {
-        # Always clear read-only first: the file has to be writable to edit it,
-        # whichever way we are about to set it.
         $item = Get-Item -LiteralPath $AcfPath -Force
         if ($item.IsReadOnly) { $item.IsReadOnly = $false }
 
@@ -65,8 +65,6 @@ function Set-LtAcfUpdateLock {
                 ('${1}' + "`t`"AutoUpdateBehavior`"`t`t`"$behavior`"`r`n"), 1)
         }
         [System.IO.File]::WriteAllText($AcfPath, $text, (New-Object System.Text.UTF8Encoding($false)))
-
-        if ($Lock) { (Get-Item -LiteralPath $AcfPath -Force).IsReadOnly = $true }
         return $true
     }
     catch {
@@ -1352,30 +1350,25 @@ Make sure SteamTools / OpenSteamTool is installed and has run at least once, the
     if ($installedManifest -eq $vl.CheckManifest) {
         Write-Host "    [+] Game is on the supported build ($($vl.BuildId)). Continuing to the report." -ForegroundColor Green
 
-        # On the right build, so put the freeze back. The downgrade needed the
-        # appmanifest writable, but now that it is done the lua pin should not be
-        # the only thing holding the build: if anything ever resets that lua, a
-        # writable manifest lets Steam pull the game straight forward again onto
-        # the build that breaks the activation. Re-locking here restores the
-        # second line of defence without ever having blocked the downgrade.
+        # On the right build, so stop Steam pulling it forward on its own again:
+        # AutoUpdateBehavior back to 1 (update on launch only), which leaves the
+        # manifest writable so a later downgrade can still run. The lua pin is
+        # what actually holds the build; this just keeps a background update from
+        # racing it. The read-only flag stays off, here and on every later run.
         if ($acfForLock -and (Set-LtAcfUpdateLock -AcfPath $acfForLock -Lock $true)) {
-            Write-Host "    [+] Re-froze this game at the supported build (Steam updates locked again)." -ForegroundColor Green
+            Write-Host "    [+] Held this game at the supported build (background Steam updates off)." -ForegroundColor Green
         }
     }
     else {
         $installedShown = if ($installedManifest) { $installedManifest } else { "unknown / not reported" }
 
-        # Not on the build yet, so the freeze has to come off or the download
-        # cannot even start. A game that has had "Disable Steam updates" applied
-        # carries a READ-ONLY appmanifest, and Steam cannot write app state while
-        # that is set: the library shows DISK WRITE ERROR and content_log records
-        # "Failed to write app state file". Nothing about that looks like a
-        # permissions problem from the user's side, it just reads as a broken
-        # download. AutoUpdateBehavior goes back to 0 at the same time, or the
-        # update sits in Unscheduled as "update on launch" and never starts.
-        # The next run re-locks it, once the game is confirmed on the good build.
+        # Not on the build yet, so anything holding the download back has to come
+        # off: the read-only flag an older run may have left on the appmanifest
+        # (DISK WRITE ERROR in the library, "Failed to write app state file" in
+        # content_log) and AutoUpdateBehavior, which otherwise parks the update in
+        # Unscheduled as "update on launch" and never starts it.
         if ($acfForLock -and (Set-LtAcfUpdateLock -AcfPath $acfForLock -Lock $false)) {
-            Write-Host "    [+] Unlocked the appmanifest so Steam can run the downgrade." -ForegroundColor Green
+            Write-Host "    [+] Cleared the appmanifest lock so Steam can run the downgrade." -ForegroundColor Green
         }
 
         # No Steam restart here on purpose. Saving the lua above is already seen by
