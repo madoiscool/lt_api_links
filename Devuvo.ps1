@@ -1339,6 +1339,35 @@ Make sure SteamTools / OpenSteamTool is installed and has run at least once, the
         $cand = [System.IO.Path]::Combine($lib, "steamapps\appmanifest_$AppID.acf")
         if (Test-Path -LiteralPath $cand) { $acfForLock = $cand; break }
     }
+
+    # A game that has had "Disable Steam updates" applied carries a READ-ONLY
+    # appmanifest, and Steam cannot write app state at all while that flag is set.
+    # The downgrade then dies the moment it starts: the library shows DISK WRITE
+    # ERROR and content_log records "Failed to write app state file". Nothing about
+    # it looks like a permissions problem from the user's side, so it reads as a
+    # broken download. The lua pin is what holds the build now, so the flag has no
+    # job left and has to come off before anyone can be asked to run the update.
+    # AutoUpdateBehavior goes back to 0 for the same reason: left at 1 the update
+    # sits in Unscheduled as "update on launch" and never starts on its own.
+    if ($acfForLock) {
+        try {
+            $acfItem = Get-Item -LiteralPath $acfForLock -Force
+            if ($acfItem.IsReadOnly) {
+                $acfItem.IsReadOnly = $false
+                Write-Host "    [+] Cleared the read-only flag on appmanifest_$AppID.acf (Steam could not have written the update)." -ForegroundColor Green
+            }
+            $acfText = [System.IO.File]::ReadAllText($acfForLock)
+            if ($acfText -match '"AutoUpdateBehavior"\s+"[^0]"') {
+                $acfText = [regex]::Replace($acfText, '("AutoUpdateBehavior"\s+")\d+(")', '${1}0${2}')
+                [System.IO.File]::WriteAllText($acfForLock, $acfText, (New-Object System.Text.UTF8Encoding($false)))
+                Write-Host "    [+] Re-enabled normal update scheduling for this game so the downgrade can run." -ForegroundColor Green
+            }
+        }
+        catch {
+            Write-Host "    [!] Could not clear the update lock on the appmanifest: $($_.Exception.Message)" -ForegroundColor Yellow
+        }
+    }
+
     $installedManifest = $null
     if ($acfForLock) {
         $lockDepots = Get-LtInstalledDepots -AcfPath $acfForLock
