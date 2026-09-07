@@ -1296,6 +1296,39 @@ Make sure SteamTools / OpenSteamTool is installed and has run at least once, the
         [System.IO.File]::WriteAllText($lockedLuaPath, $desiredLua, (New-Object System.Text.UTF8Encoding($false)))
         Write-Host "    [+] Version-locked lua already in place, re-saved so Steam re-checks the build." -ForegroundColor Green
     }
+
+    # Sitting in LuaTools' own <AppID>.lua slot is not enough to make the lock
+    # stick. When two files pin the same depot SteamTools keeps whichever it read
+    # last, and the folder is read in name order, so tokeerdrm_<AppID>.lua (written
+    # by the TokeerDRM app on redeem) lands after <AppID>.lua and its pin to the
+    # CURRENT build silently cancels ours: the lua looks correct, and no update
+    # ever appears. Comment out the competing setManifestid lines only. Everything
+    # else in those files, including the appticket and eticket that a redeemed
+    # activation depends on, is left exactly as it was.
+    $lockedDepots = @(
+        [regex]::Matches($desiredLua, '(?im)^[ \t]*setManifestid\s*\(\s*(\d+)') |
+        ForEach-Object { $_.Groups[1].Value } | Select-Object -Unique
+    )
+    foreach ($other in @(Get-ChildItem -LiteralPath $stpluginDir.FullName -Filter *.lua -ErrorAction SilentlyContinue)) {
+        if ($other.FullName -eq $lockedLuaPath) { continue }
+        $otherText = [System.IO.File]::ReadAllText($other.FullName)
+        $patched = $otherText
+        foreach ($depot in $lockedDepots) {
+            # Anchored to the start of a line, so an already commented pin is
+            # skipped and nothing inside a ticket string can be hit.
+            $patched = [regex]::Replace(
+                $patched,
+                ('(?im)^(?<indent>[ \t]*)(?<call>setManifestid[ \t]*\([ \t]*' + $depot + '[ \t]*,)'),
+                '${indent}-- ${call}'
+            )
+        }
+        if ($patched -ne $otherText) {
+            try { Copy-Item -LiteralPath $other.FullName -Destination ($other.FullName + ".bak_" + (Get-Date -Format 'yyyyMMdd_HHmmss')) -Force } catch {}
+            [System.IO.File]::WriteAllText($other.FullName, $patched, (New-Object System.Text.UTF8Encoding($false)))
+            Write-Host "    [+] Disabled a competing version pin in $($other.Name)" -ForegroundColor Green
+        }
+    }
+
     $reportData.LuaFileFound = $true
     $reportData.UpdatesDisabled = $true
 
