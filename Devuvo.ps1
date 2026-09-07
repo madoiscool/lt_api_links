@@ -104,43 +104,6 @@ function Show-LuaError {
     }
 }
 
-function Restart-LtSteam {
-    # Close Steam and bring it straight back. Steam only re-reads an app's manifest
-    # on its own update cycle or on restart, so after a version-locked lua is written
-    # the pinned build stays invisible until Steam comes back up. Doing it here means
-    # the user sees the Update button instead of being told to go and find it.
-    # Deliberately standalone: the fuller Start-SteamAndWait is defined much further
-    # down the script and does not exist yet at this point.
-    param([string]$SteamPath)
-
-    if (-not $SteamPath) { return $false }
-    $steamExe = Join-Path $SteamPath "steam.exe"
-    if (-not (Test-Path -LiteralPath $steamExe)) { return $false }
-
-    Write-Host "`n[*] Restarting Steam so it picks up the version lock..." -ForegroundColor Cyan
-    foreach ($procName in @("steam", "steamwebhelper")) {
-        Stop-Process -Name $procName -Force -ErrorAction SilentlyContinue
-    }
-    # Poll instead of guessing a sleep, Steam takes its time on slower machines.
-    $deadline = (Get-Date).AddSeconds(20)
-    while ((Get-Process -Name "steam" -ErrorAction SilentlyContinue) -and (Get-Date) -lt $deadline) {
-        Start-Sleep -Milliseconds 500
-    }
-    Start-Sleep -Seconds 1
-
-    try { Start-Process -FilePath $steamExe } catch { return $false }
-    $upBy = (Get-Date).AddSeconds(25)
-    while ((Get-Date) -lt $upBy) {
-        if (Get-Process -Name "steam" -ErrorAction SilentlyContinue) {
-            Write-Host "    [+] Steam is back up. The game should now show an Update." -ForegroundColor Green
-            return $true
-        }
-        Start-Sleep -Seconds 2
-    }
-    Write-Host "    [!] Steam did not come back on its own. Open it manually." -ForegroundColor Yellow
-    return $false
-}
-
 # ========================
 # UNRELEASED GAME OVERRIDES
 # Games not yet on Steam - detected by folder name instead of appmanifest
@@ -1281,6 +1244,11 @@ Make sure SteamTools / OpenSteamTool is installed and has run at least once, the
     $desiredLua = ($vl.Lua -replace "`r`n", "`n")
     $currentLua = if (Test-Path -LiteralPath $lockedLuaPath) { (Get-Content -LiteralPath $lockedLuaPath -Raw) -replace "`r`n", "`n" } else { "" }
 
+    # The file is written every time, even when it already holds exactly the right
+    # text. SteamTools only announces a depot change to Steam for a write it sees
+    # while it is running, so a lua that is already correct on disk is loaded
+    # silently and Steam is never asked to look at the app again. Re-saving is what
+    # puts the Update in the library, and it is why no Steam restart is needed.
     if ($currentLua.Trim() -ne $desiredLua.Trim()) {
         if ($currentLua) {
             try { Copy-Item -LiteralPath $lockedLuaPath -Destination ($lockedLuaPath + ".bak_" + (Get-Date -Format 'yyyyMMdd_HHmmss')) -Force } catch {}
@@ -1289,7 +1257,8 @@ Make sure SteamTools / OpenSteamTool is installed and has run at least once, the
         Write-Host "    [+] Wrote version-locked lua: $lockedLuaPath" -ForegroundColor Green
     }
     else {
-        Write-Host "    [+] Version-locked lua already in place." -ForegroundColor Green
+        [System.IO.File]::WriteAllText($lockedLuaPath, $desiredLua, (New-Object System.Text.UTF8Encoding($false)))
+        Write-Host "    [+] Version-locked lua already in place, re-saved so Steam re-checks the build." -ForegroundColor Green
     }
     $reportData.LuaFileFound = $true
     $reportData.UpdatesDisabled = $true
@@ -1313,25 +1282,17 @@ Make sure SteamTools / OpenSteamTool is installed and has run at least once, the
     else {
         $installedShown = if ($installedManifest) { $installedManifest } else { "unknown / not reported" }
 
-        # Restart Steam before the dialog, so by the time they read it the Update is
-        # already sitting in their library. Steam will not show the pinned build
-        # until it restarts, and asking a user to do that themselves is where most
-        # of them fall off.
-        $steamRestarted = Restart-LtSteam -SteamPath $steamPath
-        $stepOne = if ($steamRestarted) {
-            "We restarted Steam for you, so the game now shows an Update in your library. Start it and let it finish."
-        }
-        else {
-            "Close Steam completely and open it again, then start the Update this game shows and let it finish."
-        }
-
+        # No Steam restart here on purpose. Saving the lua above is already seen by
+        # SteamTools while Steam runs, and that is what makes the Update appear.
+        # Restarting Steam actively works against it: on startup the lua is loaded
+        # through a path that never tells Steam anything changed.
         Show-LuaError -Title "Update this game, then validate again" -Message @"
 $($vl.GameName) only works on build $($vl.BuildId). Its newest Steam update breaks the activation, so we locked the supported version on your PC with a version-locked lua.
 
 The update is really a downgrade. The lock points Steam back at the build that works, so letting it "update" is what puts you on the right version.
 
 Do this now:
-  1. $stepOne
+  1. Open your Steam library. This game now shows an Update. Start it and let it finish.
   2. Wait until Steam lists it as fully installed (not Queued, Downloading, or Updating).
   3. Run this validation again.
 
