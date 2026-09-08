@@ -49,7 +49,10 @@ function Get-SteamAppManifest {
     $roots = @((Join-Path $steam 'steamapps'))
     $vdf = Join-Path $steam 'steamapps\libraryfolders.vdf'
     if (Test-Path -LiteralPath $vdf) {
-        foreach ($m in [regex]::Matches((Get-Content -LiteralPath $vdf -Raw), '"path"\s+"([^"]+)"')) {
+        # ReadAllText, not Get-Content: the vdf is UTF-8 and Windows PowerShell
+        # 5.1 would decode it with the machine's ANSI codepage, turning a library
+        # folder with a non-ASCII name into mojibake and losing that library.
+        foreach ($m in [regex]::Matches([System.IO.File]::ReadAllText($vdf), '"path"\s+"([^"]+)"')) {
             $roots += (Join-Path ($m.Groups[1].Value -replace '\\\\', '\') 'steamapps')
         }
     }
@@ -79,7 +82,7 @@ function Set-SteamUpdateLock {
         if ($file.IsReadOnly) { $file.IsReadOnly = $false }
 
         $behavior = if ($Lock) { '1' } else { '0' }
-        $text = Get-Content -LiteralPath $acf -Raw
+        $text = [System.IO.File]::ReadAllText($acf)
         if ($text -match '"AutoUpdateBehavior"\s+"\d+"') {
             $text = [regex]::Replace($text, '("AutoUpdateBehavior"\s+")\d+(")', "`${1}$behavior`${2}")
         }
@@ -87,7 +90,8 @@ function Set-SteamUpdateLock {
             $text = [regex]::Replace($text, '("appid"\s+"\d+"\s*\r?\n)',
                 "`$1`t`"AutoUpdateBehavior`"`t`t`"$behavior`"`r`n", 1)
         }
-        Set-Content -LiteralPath $acf -Value $text -Encoding UTF8 -NoNewline
+        # Set-Content -Encoding UTF8 writes a BOM on 5.1, and this file had none.
+        [System.IO.File]::WriteAllText($acf, $text, (New-Object System.Text.UTF8Encoding($false)))
 
         if ($Lock) {
             if (-not $versionLocked) { (Get-Item -LiteralPath $acf).IsReadOnly = $true }

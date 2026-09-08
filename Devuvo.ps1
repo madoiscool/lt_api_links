@@ -663,7 +663,13 @@ $bytesToDownload = 0
 $bytesDownloaded = 0
 
 if (Test-Path $libraryFoldersPath) {
-    $content = Get-Content $libraryFoldersPath -Raw
+    # ReadAllText, not Get-Content: Steam writes this file as UTF-8, and under
+    # Windows PowerShell 5.1 Get-Content decodes with the machine's ANSI
+    # codepage instead. A library folder whose name is not plain ASCII then
+    # comes back as mojibake, the path fails Test-Path, and the whole library is
+    # dropped without a word. That is a game on a perfectly normal drive being
+    # reported as not installed.
+    $content = [System.IO.File]::ReadAllText($libraryFoldersPath)
     $vdfMatches = [regex]::Matches($content, $vdfPathPattern)
     foreach ($match in $vdfMatches) {
         $libPath = $match.Groups[1].Value.Replace("\\", "\")
@@ -699,6 +705,16 @@ foreach ($drive in $fixedDrives) {
     foreach ($guess in $libGuesses) {
         if (Test-Path -LiteralPath (Join-Path $guess "steamapps\common")) {
             $libraries += $guess
+        }
+    }
+
+    # A library the user named themselves ("E:\Games2", or a localised "New
+    # folder") matches none of the guesses above, so the vdf is its only route
+    # in. One level down from the drive root is a cheap listing and catches it
+    # even when the vdf is missing, stale, or unreadable.
+    foreach ($dir in (Get-ChildItem -LiteralPath $drive -Directory -Force -ErrorAction SilentlyContinue)) {
+        if (Test-Path -LiteralPath (Join-Path $dir.FullName "steamapps\common")) {
+            $libraries += $dir.FullName
         }
     }
 }
@@ -804,7 +820,9 @@ if ($isUnreleased) {
     foreach ($lib in $libraries) {
         $manifestPath = [System.IO.Path]::Combine($lib, "steamapps\appmanifest_$AppID.acf")
         if (Test-Path -LiteralPath $manifestPath) {
-            $manifestContent = Get-Content -LiteralPath $manifestPath -Raw
+            # Same reason as libraryfolders.vdf above: installdir and name are
+            # UTF-8 and a game folder with an accent in it must survive the read.
+            $manifestContent = [System.IO.File]::ReadAllText($manifestPath)
 
             $installDirNameMatch = [regex]::Match($manifestContent, $manifestInstallDirPattern)
             $nameMatch = [regex]::Match($manifestContent, $manifestNamePattern)
