@@ -60,6 +60,91 @@ function Clear-LtAcfReadOnly {
     }
 }
 
+function Set-LtAcfField {
+    # Set one top-level AppState key, adding it right after "appid" if it is absent.
+    param([string]$Text, [string]$Key, [string]$Value)
+    if ($Text -match ('"' + [regex]::Escape($Key) + '"\s+"[^"]*"')) {
+        return [regex]::Replace($Text,
+            ('("' + [regex]::Escape($Key) + '"\s+")[^"]*(")'),
+            ('${1}' + $Value + '${2}'))
+    }
+    return [regex]::Replace($Text, '("appid"\s+"\d+"\s*\r?\n)',
+        ('${1}' + "`t`"$Key`"`t`t`"$Value`"`r`n"), 1)
+}
+
+function Repair-LtAppManifest {
+    # Rewrite the appmanifest from the user's OWN state, so Steam re-reads it and
+    # queues the downgrade the lua asks for.
+    #
+    # Deleting the manifest also works, and is what people fall back to by hand,
+    # but it makes Steam treat the game as a fresh install and run its free-space
+    # check against the FULL install size. Someone with 20 GB free cannot start a
+    # 157 GB "install" even though the real download is a few GB, so that route is
+    # shut to exactly the people who need it most.
+    #
+    # Keeping InstalledDepots untouched is what keeps this a delta: Steam diffs
+    # what it believes is on disk against the pinned manifests and fetches only
+    # the difference. Nothing here tells Steam the game is already downgraded,
+    # which is why the depot manifests are never rewritten. Everything else is put
+    # back to a clean just-installed state, the update-required bit is set so Steam
+    # actually looks again, and the file is rewritten as UTF-8 with no BOM.
+    param([string]$AcfPath)
+
+    if (-not $AcfPath -or -not (Test-Path -LiteralPath $AcfPath)) { return $false }
+    try {
+        $item = Get-Item -LiteralPath $AcfPath -Force
+        if ($item.IsReadOnly) { $item.IsReadOnly = $false }
+
+        $text = [System.IO.File]::ReadAllText($AcfPath)
+        if ($text -notmatch '"AppState"' -or $text -notmatch '"InstalledDepots"') {
+            Write-Host "    [!] The appmanifest is not readable as one, leaving it alone." -ForegroundColor Yellow
+            return $false
+        }
+
+        # An older validator read this file with the ANSI codepage and wrote it
+        # back as UTF-8, so a name with a character like the trademark sign in
+        # "EA SPORTS FC(tm) 26" came back doubly encoded. Undo that, and only when
+        # it round-trips cleanly.
+        $nm = [regex]::Match($text, '("name"\s+")([^"]*)(")')
+        if ($nm.Success -and $nm.Groups[2].Value -match '[ÂÃâ]') {
+            try {
+                $cp = [System.Text.Encoding]::GetEncoding(1252)
+                $fixed = [System.Text.Encoding]::UTF8.GetString($cp.GetBytes($nm.Groups[2].Value))
+                if ($fixed -and $fixed.IndexOf([char]0xFFFD) -lt 0 -and $fixed -ne $nm.Groups[2].Value) {
+                    $text = $text.Remove($nm.Groups[2].Index, $nm.Groups[2].Length).Insert($nm.Groups[2].Index, $fixed)
+                    Write-Host "    [+] Repaired the game name in the appmanifest ('$fixed')." -ForegroundColor Green
+                }
+            }
+            catch { }
+        }
+
+        # 4 = fully installed, 2 = update required. Installed stays on so Steam
+        # keeps the files and the small space check; update-required is what puts
+        # the download back in the library.
+        $text = Set-LtAcfField -Text $text -Key 'StateFlags'          -Value '6'
+        $text = Set-LtAcfField -Text $text -Key 'AutoUpdateBehavior'  -Value '0'
+        $text = Set-LtAcfField -Text $text -Key 'ScheduledAutoUpdate' -Value '0'
+        $text = Set-LtAcfField -Text $text -Key 'UpdateResult'        -Value '0'
+        $text = Set-LtAcfField -Text $text -Key 'TargetBuildID'       -Value '0'
+        $text = Set-LtAcfField -Text $text -Key 'StagingSize'         -Value '0'
+        foreach ($k in @('BytesToDownload', 'BytesDownloaded', 'BytesToStage', 'BytesStaged')) {
+            $text = Set-LtAcfField -Text $text -Key $k -Value '0'
+        }
+
+        $bak = "$AcfPath.ltbak_" + (Get-Date -Format 'yyyyMMdd_HHmmss')
+        try { Copy-Item -LiteralPath $AcfPath -Destination $bak -Force } catch { }
+
+        # No BOM. Set-Content -Encoding UTF8 on 5.1 writes one, and this file never
+        # had it.
+        [System.IO.File]::WriteAllText($AcfPath, $text, (New-Object System.Text.UTF8Encoding($false)))
+        return $true
+    }
+    catch {
+        Write-Host "    [!] Could not rewrite the appmanifest: $($_.Exception.Message)" -ForegroundColor Yellow
+        return $false
+    }
+}
+
 function Set-LtAcfUpdateLock {
     # Freeze or unfreeze a game through its appmanifest's AutoUpdateBehavior.
     #
@@ -1428,6 +1513,21 @@ Make sure SteamTools / OpenSteamTool is installed and has run at least once, the
             Write-Host "    [+] Cleared the appmanifest lock so Steam can run the downgrade." -ForegroundColor Green
         }
 
+        # Writing the lua is not always enough on its own. SteamTools only tells
+        # Steam a depot changed for a write it sees while Steam is running, so on
+        # some machines the pin lands but Steam never re-checks the app and no
+        # Update ever shows up. Rewriting the appmanifest is what makes it look:
+        # the file changes on disk, the update-required bit is set, and the depot
+        # list is left exactly as it was so the download stays a delta rather than
+        # a reinstall.
+        $acfRepaired = $false
+        if ($acfForLock) {
+            $acfRepaired = Repair-LtAppManifest -AcfPath $acfForLock
+            if ($acfRepaired) {
+                Write-Host "    [+] Rewrote the appmanifest so Steam re-checks this game." -ForegroundColor Green
+            }
+        }
+
         # No Steam restart here on purpose. Saving the lua above is already seen by
         # SteamTools while Steam runs, and that is what makes the Update appear.
         # Restarting Steam actively works against it: on startup the lua is loaded
@@ -1441,6 +1541,11 @@ Do this now:
   1. Open your Steam library. This game now shows an Update. Start it and let it finish.
   2. Wait until Steam lists it as fully installed (not Queued, Downloading, or Updating).
   3. Run this validation again.
+
+Your game files are not deleted and this is not a reinstall, so it only downloads
+the parts that actually differ between the two builds.
+
+If no Update appears, close Steam completely, open it again, and look once more.
 
 Your installed build did not match yet:
   needed depot $($vl.CheckDepot) manifest $($vl.CheckManifest)
