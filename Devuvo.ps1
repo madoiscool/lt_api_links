@@ -1152,8 +1152,18 @@ else {
         #   524288 Preallocating  1048576 Downloading  2097152 Staging
         #   4194304 Committing    8388608 UpdateStopping
         $STATE_BUSY_MASK = 2 -bor 32 -bor 128 -bor 256 -bor 512 -bor 1024 -bor 65536 -bor 131072 -bor 262144 -bor 524288 -bor 1048576 -bor 2097152 -bor 4194304 -bor 8388608
+        # UpdateRequired is one we set ourselves on a version-locked game, to make
+        # Steam offer the downgrade. On the next run it would read as "mid
+        # download" here and hide the version-lock instructions behind a progress
+        # message the user can do nothing about. Those games get their own build
+        # check further down, so drop that one bit for them. Every other bit still
+        # applies, so a genuine download in progress is still caught.
+        $busyMask = $STATE_BUSY_MASK
+        if ($versionLockedGames.ContainsKey($AppID)) {
+            $busyMask = $busyMask -band (-bnot 2)
+        }
         $bytesComplete = ($bytesToDownload -le 0) -or ($bytesDownloaded -ge $bytesToDownload)
-        $installComplete = (($appStateFlags -band $STATE_FULLY_INSTALLED) -ne 0) -and (($appStateFlags -band $STATE_BUSY_MASK) -eq 0) -and $bytesComplete
+        $installComplete = (($appStateFlags -band $STATE_FULLY_INSTALLED) -ne 0) -and (($appStateFlags -band $busyMask) -eq 0) -and $bytesComplete
         if (-not $installComplete) {
             $progressText = ''
             if ($bytesToDownload -gt 0 -and $bytesDownloaded -lt $bytesToDownload) {
