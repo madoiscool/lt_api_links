@@ -311,11 +311,21 @@ function Ensure-LtLockedManifests {
         if (Test-Path -LiteralPath $cand) { $pack = $cand; break }
     }
     if (-not $pack) {
+        # Straight off the release, which GitHub serves from its own CDN: no
+        # rate limit on asset downloads (that only applies to api.github.com)
+        # and nothing of ours in the path to pay for or keep running. To add a
+        # game, upload <AppID>.zip to the versionlocks release and nothing here
+        # has to change.
         $pack = Join-Path $env:TEMP "$AppID`_lock.zip"
-        $url = "https://files.luatools.work/VersionLocks/$AppID.zip"
+        $url = "https://github.com/madoiscool/lt_api_links/releases/download/versionlocks/$AppID.zip"
         try {
             Write-Host "    [*] Fetching the build's manifests..." -ForegroundColor DarkGray
-            Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $pack -TimeoutSec 180 -ErrorAction Stop
+            $oldProgress = $ProgressPreference
+            $ProgressPreference = 'SilentlyContinue'   # the progress bar makes this crawl
+            try {
+                Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $pack -TimeoutSec 180 -ErrorAction Stop
+            }
+            finally { $ProgressPreference = $oldProgress }
         }
         catch {
             Write-Host "    [-] Could not download the manifest pack: $($_.Exception.Message)" -ForegroundColor Yellow
