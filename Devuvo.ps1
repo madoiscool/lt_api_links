@@ -182,6 +182,196 @@ function Set-LtAcfUpdateLock {
     }
 }
 
+function Get-LtDepotcacheDir {
+    # Steam reads a depot's manifest out of depotcache before it asks its CDN for
+    # one, so this is where a build's manifests have to land.
+    param([string]$SteamRoot)
+    if (-not $SteamRoot) { return $null }
+    $dir = Join-Path $SteamRoot "depotcache"
+    if (-not (Test-Path -LiteralPath $dir)) {
+        try { New-Item -ItemType Directory -Path $dir -Force | Out-Null } catch { return $null }
+    }
+    return $dir
+}
+
+function Get-LtManifestVault {
+    # Our own copy of every manifest we have ever placed. Steam empties depotcache
+    # entries for a game when it is uninstalled, and without the manifest the lua's
+    # pin points at a build Steam can no longer fetch, so the reinstall never
+    # starts. Keeping a copy off to the side means a later run puts it straight
+    # back with no download.
+    param([string]$AppID)
+    $dir = Join-Path $env:LOCALAPPDATA "LuaTools\manifest-vault\$AppID"
+    if (-not (Test-Path -LiteralPath $dir)) {
+        try { New-Item -ItemType Directory -Path $dir -Force | Out-Null } catch { return $null }
+    }
+    return $dir
+}
+
+function Copy-LtManifest {
+    # Copy one manifest into place and mark it read-only.
+    #
+    # This is the depotcache manifest, NOT the appmanifest: the read-only flag on
+    # an .acf stops Steam writing app state and breaks every download, which is
+    # why Set-LtAcfUpdateLock always clears it. On a .manifest the flag costs
+    # nothing and is the only thing that survives an uninstall, because the
+    # cleanup deletes without clearing attributes first.
+    param([string]$From, [string]$To)
+    try {
+        if (Test-Path -LiteralPath $To) {
+            $existing = Get-Item -LiteralPath $To -Force
+            if ($existing.IsReadOnly) { $existing.IsReadOnly = $false }
+        }
+        Copy-Item -LiteralPath $From -Destination $To -Force -ErrorAction Stop
+        $placed = Get-Item -LiteralPath $To -Force
+        $placed.IsReadOnly = $true
+        return $true
+    }
+    catch {
+        return $false
+    }
+}
+
+function Ensure-LtLockedManifests {
+    # Put the locked build's manifests where Steam looks.
+    #
+    # The lua pin alone stopped being enough: Steam will not hand out a manifest
+    # request code for a build to an account that does not own the game, so the
+    # pinned old manifest can never be fetched and the "update" dies before it
+    # downloads anything. Dropping the .manifest files straight into depotcache
+    # skips that request entirely, which is the same trick the seeder uses.
+    #
+    # Files already present are left alone, so this is a no-op on a machine that
+    # is already set up. Returns $true when every pinned depot has its manifest.
+    param(
+        [string]$AppID,
+        [string]$Lua,
+        [string]$SteamRoot
+    )
+
+    $wanted = @{}
+    foreach ($m in [regex]::Matches($Lua, '(?im)^[ \t]*setManifestid\s*\(\s*(\d+)\s*,\s*"(\d+)"')) {
+        $wanted[$m.Groups[1].Value] = $m.Groups[2].Value
+    }
+    if ($wanted.Count -eq 0) { return $true }
+
+    $depotcache = Get-LtDepotcacheDir -SteamRoot $SteamRoot
+    if (-not $depotcache) {
+        Write-Host "    [!] Could not open the depotcache folder, skipping the manifest seed." -ForegroundColor Yellow
+        return $false
+    }
+    $vault = Get-LtManifestVault -AppID $AppID
+
+    $missing = @{}
+    foreach ($depot in $wanted.Keys) {
+        $name = "$depot`_$($wanted[$depot]).manifest"
+        $dest = Join-Path $depotcache $name
+        if (Test-Path -LiteralPath $dest) {
+            # keep the vault topped up from what is already good on disk
+            if ($vault) {
+                $keep = Join-Path $vault $name
+                if (-not (Test-Path -LiteralPath $keep)) {
+                    try { Copy-Item -LiteralPath $dest -Destination $keep -Force } catch {}
+                }
+            }
+            continue
+        }
+        $missing[$depot] = $name
+    }
+    if ($missing.Count -eq 0) {
+        Write-Host "    [+] All $($wanted.Count) pinned manifest(s) are already in depotcache." -ForegroundColor Green
+        return $true
+    }
+
+    # 1. anything the vault still holds goes back for free
+    $restored = 0
+    if ($vault) {
+        foreach ($depot in @($missing.Keys)) {
+            $name = $missing[$depot]
+            $keep = Join-Path $vault $name
+            if ((Test-Path -LiteralPath $keep) -and (Copy-LtManifest -From $keep -To (Join-Path $depotcache $name))) {
+                $missing.Remove($depot)
+                $restored++
+            }
+        }
+    }
+    if ($restored -gt 0) {
+        Write-Host "    [+] Put $restored manifest(s) back from the local copy." -ForegroundColor Green
+    }
+    if ($missing.Count -eq 0) { return $true }
+
+    # 2. the rest come out of the build's manifest pack
+    $pack = $null
+    $local = @(
+        (Join-Path $env:USERPROFILE "Downloads\$AppID.zip"),
+        (Join-Path $env:TEMP "$AppID.zip")
+    )
+    if ($PSScriptRoot) { $local = @((Join-Path $PSScriptRoot "$AppID.zip")) + $local }
+    foreach ($cand in $local) {
+        if (Test-Path -LiteralPath $cand) { $pack = $cand; break }
+    }
+    if (-not $pack) {
+        $pack = Join-Path $env:TEMP "$AppID`_lock.zip"
+        $url = "https://files.luatools.work/VersionLocks/$AppID.zip"
+        try {
+            Write-Host "    [*] Fetching the build's manifests..." -ForegroundColor DarkGray
+            Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $pack -TimeoutSec 180 -ErrorAction Stop
+        }
+        catch {
+            Write-Host "    [-] Could not download the manifest pack: $($_.Exception.Message)" -ForegroundColor Yellow
+            return $false
+        }
+    }
+
+    $stage = Join-Path $env:TEMP "lt_lock_$AppID"
+    try {
+        if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue }
+        Expand-Archive -LiteralPath $pack -DestinationPath $stage -Force -ErrorAction Stop
+    }
+    catch {
+        Write-Host "    [-] The manifest pack could not be opened: $($_.Exception.Message)" -ForegroundColor Yellow
+        return $false
+    }
+
+    $placed = 0
+    foreach ($depot in @($missing.Keys)) {
+        $name = $missing[$depot]
+        $src = Get-ChildItem -LiteralPath $stage -Filter $name -Recurse -File -ErrorAction SilentlyContinue | Select-Object -First 1
+        if (-not $src) { continue }
+        if (Copy-LtManifest -From $src.FullName -To (Join-Path $depotcache $name)) {
+            if ($vault) { try { Copy-Item -LiteralPath $src.FullName -Destination (Join-Path $vault $name) -Force } catch {} }
+            $missing.Remove($depot)
+            $placed++
+        }
+    }
+    # The pack also carries the shared and redist depots the lua lists without a
+    # pin. They are not what this is for, but the archive is already open and a
+    # manifest sitting in depotcache is one less thing Steam has to go and ask
+    # for, so any that are not there yet go in too.
+    $extra = 0
+    foreach ($f in @(Get-ChildItem -LiteralPath $stage -Filter *.manifest -Recurse -File -ErrorAction SilentlyContinue)) {
+        $dest = Join-Path $depotcache $f.Name
+        if (Test-Path -LiteralPath $dest) { continue }
+        if (Copy-LtManifest -From $f.FullName -To $dest) {
+            if ($vault) { try { Copy-Item -LiteralPath $f.FullName -Destination (Join-Path $vault $f.Name) -Force } catch {} }
+            $extra++
+        }
+    }
+    try { Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue } catch {}
+
+    if ($extra -gt 0) {
+        Write-Host "    [+] Also placed $extra shared depot manifest(s) from the pack." -ForegroundColor DarkGray
+    }
+    if ($placed -gt 0) {
+        Write-Host "    [+] Placed $placed manifest(s) into depotcache." -ForegroundColor Green
+    }
+    if ($missing.Count -gt 0) {
+        Write-Host "    [!] $($missing.Count) pinned depot(s) still have no manifest: $($missing.Values -join ', ')" -ForegroundColor Yellow
+        return $false
+    }
+    return $true
+}
+
 function Set-LtVersionPin {
     # Pin every INSTALLED depot to its currently-installed manifest (never a stale
     # GID that would downgrade the game); leave shared-runtime depots (not in
@@ -1485,6 +1675,16 @@ Make sure SteamTools / OpenSteamTool is installed and has run at least once, the
     $reportData.LuaFileFound = $true
     $reportData.UpdatesDisabled = $true
 
+    # The pin names an old build's manifest, and Steam can no longer fetch one of
+    # those for an account that does not own the game, so the download dies before
+    # it starts. Put the manifests into depotcache ourselves and Steam never has to
+    # ask. They are marked read-only and copied to a vault, so an uninstall cannot
+    # take them and the reinstall still works.
+    $manifestsReady = Ensure-LtLockedManifests -AppID $AppID -Lua $desiredLua -SteamRoot $steamPath
+    if (-not $manifestsReady) {
+        Write-Host "    [!] Some of the locked build's manifests are missing, so the download may not start." -ForegroundColor Yellow
+    }
+
     # Is Steam actually ON the good build yet? Read the installed manifest for the
     # check depot straight from the appmanifest's InstalledDepots block.
     $acfForLock = $null
@@ -1556,6 +1756,9 @@ Your game files are not deleted and this is not a reinstall, so it only download
 the parts that actually differ between the two builds.
 
 If no Update appears, close Steam completely, open it again, and look once more.
+
+The manifests for that build are already on your PC, so the download has everything
+it needs. They are kept even if you uninstall the game, so a reinstall still works.
 
 Your installed build did not match yet:
   needed depot $($vl.CheckDepot) manifest $($vl.CheckManifest)
