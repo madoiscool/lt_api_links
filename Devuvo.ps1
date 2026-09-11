@@ -1683,47 +1683,16 @@ Make sure SteamTools / OpenSteamTool is installed and has run at least once, the
 
     if ($installedBuild -eq $vl.BuildId) {
         Write-Host "    [+] Game is on the supported build ($($vl.BuildId)). Continuing to the report." -ForegroundColor Green
-
-        # On the right build, so stop Steam pulling it forward on its own again:
-        # AutoUpdateBehavior back to 1 (update on launch only), which leaves the
-        # manifest writable so a later downgrade can still run. The lua pin is
-        # what actually holds the build; this just keeps a background update from
-        # racing it. The read-only flag stays off, here and on every later run.
-        if ($acfForLock -and (Set-LtAcfUpdateLock -AcfPath $acfForLock -Lock $true)) {
-            Write-Host "    [+] Held this game at the supported build (background Steam updates off)." -ForegroundColor Green
-        }
     }
     else {
         $installedShown = if ($installedBuild) { $installedBuild } else { "unknown / not reported" }
 
-        # Not on the build yet, so anything holding the download back has to come
-        # off: the read-only flag an older run may have left on the appmanifest
-        # (DISK WRITE ERROR in the library, "Failed to write app state file" in
-        # content_log) and AutoUpdateBehavior, which otherwise parks the update in
-        # Unscheduled as "update on launch" and never starts it.
-        if ($acfForLock -and (Set-LtAcfUpdateLock -AcfPath $acfForLock -Lock $false)) {
-            Write-Host "    [+] Cleared the appmanifest lock so Steam can run the downgrade." -ForegroundColor Green
-        }
-
-        # Writing the lua is not always enough on its own. SteamTools only tells
-        # Steam a depot changed for a write it sees while Steam is running, so on
-        # some machines the pin lands but Steam never re-checks the app and no
-        # Update ever shows up. Rewriting the appmanifest is what makes it look:
-        # the file changes on disk, the update-required bit is set, and the depot
-        # list is left exactly as it was so the download stays a delta rather than
-        # a reinstall.
-        $acfRepaired = $false
-        if ($acfForLock) {
-            $acfRepaired = Repair-LtAppManifest -AcfPath $acfForLock
-            if ($acfRepaired) {
-                Write-Host "    [+] Rewrote the appmanifest so Steam re-checks this game." -ForegroundColor Green
-            }
-        }
-
-        # No Steam restart here on purpose. Saving the lua above is already seen by
-        # SteamTools while Steam runs, and that is what makes the Update appear.
-        # Restarting Steam actively works against it: on startup the lua is loaded
-        # through a path that never tells Steam anything changed.
+        # The locked lua is in stplug-in and the build's manifests are in
+        # depotcache, which is exactly what a manual drop does, and that is what
+        # makes Steam show the downgrade. We deliberately do NOT rewrite the
+        # appmanifest: editing app state while Steam is running gets clobbered and
+        # fights the update the freshly written lua triggers. Any read-only flag
+        # was already cleared at the top of the run.
         Show-LuaError -Title "Update this game, then validate again" -Message @"
 $($vl.GameName) only works on build $($vl.BuildId). Its newest Steam update breaks the activation, so we locked the supported version on your PC with a version-locked lua.
 
