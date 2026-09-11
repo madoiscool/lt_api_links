@@ -1600,9 +1600,23 @@ Make sure SteamTools / OpenSteamTool is installed and has run at least once, the
     $desiredLua = ($vl.Lua -replace "`r`n", "`n")
     $currentLua = if (Test-Path -LiteralPath $lockedLuaPath) { (Get-Content -LiteralPath $lockedLuaPath -Raw) -replace "`r`n", "`n" } else { "" }
 
-    # Snapshot the BEFORE state: was the correct locked lua already on disk? This
-    # feeds the "is the lock already set?" gate below, so capture it before the write.
-    $luaWasCorrect = ($currentLua.Trim() -eq $desiredLua.Trim())
+    # The pins this lock needs: depot -> manifest gid, read from the locked lua.
+    $wantedPins = @{}
+    foreach ($pm in [regex]::Matches($desiredLua, '(?im)^[ \t]*setManifestid\s*\(\s*(\d+)\s*,\s*"(\d+)"')) {
+        $wantedPins[$pm.Groups[1].Value] = $pm.Groups[2].Value
+    }
+
+    # Is the lock already set in the lua? We do NOT compare the whole file. BetterSteamTools
+    # and other forks re-save the lua in their own format once they load it, so an exact match
+    # would fail on every re-run and keep nagging. What matters is that every depot is pinned to
+    # the exact gid as an active (not commented) setManifestid line. That survives a reformat and
+    # is the real meaning of "the lua is set".
+    $luaWasCorrect = $true
+    foreach ($depot in $wantedPins.Keys) {
+        $rx = '(?im)^[ \t]*setManifestid\s*\(\s*' + [regex]::Escape($depot) + '\s*,\s*"' + [regex]::Escape($wantedPins[$depot]) + '"'
+        if ($currentLua -notmatch $rx) { $luaWasCorrect = $false; break }
+    }
+    if ($wantedPins.Count -eq 0) { $luaWasCorrect = ($currentLua.Trim() -eq $desiredLua.Trim()) }
 
     # Only write when it is not already correct. A lua that is already right is left
     # alone, so a game that is already set up is not needlessly poked.
@@ -1660,13 +1674,9 @@ Make sure SteamTools / OpenSteamTool is installed and has run at least once, the
     # Snapshot whether every pinned manifest was ALREADY in depotcache, before we
     # place anything, so the gate below can tell a fresh setup from a done one.
     $depotcacheDir = Join-Path $steamPath "depotcache"
-    $wantedManifests = @{}
-    foreach ($mm in [regex]::Matches($desiredLua, '(?im)^[ \t]*setManifestid\s*\(\s*(\d+)\s*,\s*"(\d+)"')) {
-        $wantedManifests[$mm.Groups[1].Value] = $mm.Groups[2].Value
-    }
     $manifestsWereAllPresent = $true
-    foreach ($depot in $wantedManifests.Keys) {
-        $mf = Join-Path $depotcacheDir "$depot`_$($wantedManifests[$depot]).manifest"
+    foreach ($depot in $wantedPins.Keys) {
+        $mf = Join-Path $depotcacheDir "$depot`_$($wantedPins[$depot]).manifest"
         if (-not (Test-Path -LiteralPath $mf)) { $manifestsWereAllPresent = $false; break }
     }
 
