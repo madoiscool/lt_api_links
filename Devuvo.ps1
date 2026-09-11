@@ -1600,12 +1600,13 @@ Make sure SteamTools / OpenSteamTool is installed and has run at least once, the
     $desiredLua = ($vl.Lua -replace "`r`n", "`n")
     $currentLua = if (Test-Path -LiteralPath $lockedLuaPath) { (Get-Content -LiteralPath $lockedLuaPath -Raw) -replace "`r`n", "`n" } else { "" }
 
-    # The file is written every time, even when it already holds exactly the right
-    # text. SteamTools only announces a depot change to Steam for a write it sees
-    # while it is running, so a lua that is already correct on disk is loaded
-    # silently and Steam is never asked to look at the app again. Re-saving is what
-    # puts the Update in the library, and it is why no Steam restart is needed.
-    if ($currentLua.Trim() -ne $desiredLua.Trim()) {
+    # Snapshot the BEFORE state: was the correct locked lua already on disk? This
+    # feeds the "is the lock already set?" gate below, so capture it before the write.
+    $luaWasCorrect = ($currentLua.Trim() -eq $desiredLua.Trim())
+
+    # Only write when it is not already correct. A lua that is already right is left
+    # alone, so a game that is already set up is not needlessly poked.
+    if (-not $luaWasCorrect) {
         if ($currentLua) {
             try { Copy-Item -LiteralPath $lockedLuaPath -Destination ($lockedLuaPath + ".bak_" + (Get-Date -Format 'yyyyMMdd_HHmmss')) -Force } catch {}
         }
@@ -1613,8 +1614,7 @@ Make sure SteamTools / OpenSteamTool is installed and has run at least once, the
         Write-Host "    [+] Wrote version-locked lua: $lockedLuaPath" -ForegroundColor Green
     }
     else {
-        [System.IO.File]::WriteAllText($lockedLuaPath, $desiredLua, (New-Object System.Text.UTF8Encoding($false)))
-        Write-Host "    [+] Version-locked lua already in place, re-saved so Steam re-checks the build." -ForegroundColor Green
+        Write-Host "    [+] Version-locked lua already in place." -ForegroundColor Green
     }
 
     # Sitting in LuaTools' own <AppID>.lua slot is not enough to make the lock
@@ -1655,44 +1655,37 @@ Make sure SteamTools / OpenSteamTool is installed and has run at least once, the
     # The pin names an old build's manifest, and Steam can no longer fetch one of
     # those for an account that does not own the game, so the download dies before
     # it starts. Put the manifests into depotcache ourselves and Steam never has to
-    # ask. They are marked read-only and copied to a vault, so an uninstall cannot
-    # take them and the reinstall still works.
+    # ask. A copy is kept in a vault so an uninstall cannot take them.
+    #
+    # Snapshot whether every pinned manifest was ALREADY in depotcache, before we
+    # place anything, so the gate below can tell a fresh setup from a done one.
+    $depotcacheDir = Join-Path $steamPath "depotcache"
+    $wantedManifests = @{}
+    foreach ($mm in [regex]::Matches($desiredLua, '(?im)^[ \t]*setManifestid\s*\(\s*(\d+)\s*,\s*"(\d+)"')) {
+        $wantedManifests[$mm.Groups[1].Value] = $mm.Groups[2].Value
+    }
+    $manifestsWereAllPresent = $true
+    foreach ($depot in $wantedManifests.Keys) {
+        $mf = Join-Path $depotcacheDir "$depot`_$($wantedManifests[$depot]).manifest"
+        if (-not (Test-Path -LiteralPath $mf)) { $manifestsWereAllPresent = $false; break }
+    }
+
     $manifestsReady = Ensure-LtLockedManifests -AppID $AppID -Lua $desiredLua -SteamRoot $steamPath
     if (-not $manifestsReady) {
         Write-Host "    [!] Some of the locked build's manifests are missing, so the download may not start." -ForegroundColor Yellow
     }
 
-    # Is Steam actually ON the good build yet? The authoritative value is the
-    # appmanifest's own buildid, the same number Steam shows in the game's Updates
-    # panel. The per-depot manifest in InstalledDepots is NOT reliable here: Steam
-    # keeps the pinned manifest listed for a depot even after the app has moved to
-    # a newer build, so a depot check reads "good build" while buildid is still the
-    # broken one. buildid never lies, so we gate on it.
-    $acfForLock = $null
-    foreach ($lib in $libraries) {
-        $cand = [System.IO.Path]::Combine($lib, "steamapps\appmanifest_$AppID.acf")
-        if (Test-Path -LiteralPath $cand) { $acfForLock = $cand; break }
-    }
-
-    $installedBuild = $null
-    if ($acfForLock) {
-        $acfText = [System.IO.File]::ReadAllText($acfForLock)
-        $bm = [regex]::Match($acfText, '"buildid"\s*"(\d+)"')
-        if ($bm.Success) { $installedBuild = $bm.Groups[1].Value }
-    }
-
-    if ($installedBuild -eq $vl.BuildId) {
-        Write-Host "    [+] Game is on the supported build ($($vl.BuildId)). Continuing to the report." -ForegroundColor Green
+    # Is the version lock already fully in place? We gate on the lock FILES, not
+    # the appmanifest buildid: Steam keeps the old buildid in the acf even after the
+    # lua pin is applied, so buildid is unreliable. The real question is whether the
+    # correct lua is in stplug-in AND every pinned manifest is in depotcache. If both
+    # were already true on entry, the lock is set and we skip to the report. If we
+    # had to place anything just now, Steam will show the resulting update; the user
+    # runs it and re-validates.
+    if ($luaWasCorrect -and $manifestsWereAllPresent) {
+        Write-Host "    [+] Version lock already set (lua + manifests in place). Continuing to the report." -ForegroundColor Green
     }
     else {
-        $installedShown = if ($installedBuild) { $installedBuild } else { "unknown / not reported" }
-
-        # The locked lua is in stplug-in and the build's manifests are in
-        # depotcache, which is exactly what a manual drop does, and that is what
-        # makes Steam show the downgrade. We deliberately do NOT rewrite the
-        # appmanifest: editing app state while Steam is running gets clobbered and
-        # fights the update the freshly written lua triggers. Any read-only flag
-        # was already cleared at the top of the run.
         Show-LuaError -Title "Update this game, then validate again" -Message @"
 $($vl.GameName) only works on build $($vl.BuildId). Its newest Steam update breaks the activation, so we locked the supported version on your PC with a version-locked lua.
 
@@ -1710,10 +1703,6 @@ If no Update appears, close Steam completely, open it again, and look once more.
 
 The manifests for that build are already on your PC, so the download has everything
 it needs. They are kept even if you uninstall the game, so a reinstall still works.
-
-Your installed build did not match yet:
-  needed build $($vl.BuildId)
-  found build $installedShown
 "@
         Write-Host "`nPress any key to exit..."
         $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
