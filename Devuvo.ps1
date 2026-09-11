@@ -1671,13 +1671,20 @@ Make sure SteamTools / OpenSteamTool is installed and has run at least once, the
     # it starts. Put the manifests into depotcache ourselves and Steam never has to
     # ask. A copy is kept in a vault so an uninstall cannot take them.
     #
-    # Snapshot whether every pinned manifest was ALREADY in depotcache, before we
+    # Snapshot whether we ALREADY hold every pinned manifest locally, before we
     # place anything, so the gate below can tell a fresh setup from a done one.
+    # A manifest counts as held if it is in depotcache OR in our vault: Steam
+    # prunes depotcache between runs, but the vault is our permanent copy that we
+    # re-seed every run, so a vault hit means the lock was set up on a previous run
+    # (not a fresh install that needs the "let Steam update" nudge).
     $depotcacheDir = Join-Path $steamPath "depotcache"
+    $vaultDir = Join-Path $env:LOCALAPPDATA "LuaTools\manifest-vault\$AppID"
     $manifestsWereAllPresent = $true
     foreach ($depot in $wantedPins.Keys) {
-        $mf = Join-Path $depotcacheDir "$depot`_$($wantedPins[$depot]).manifest"
-        if (-not (Test-Path -LiteralPath $mf)) { $manifestsWereAllPresent = $false; break }
+        $name = "$depot`_$($wantedPins[$depot]).manifest"
+        $inCache = Test-Path -LiteralPath (Join-Path $depotcacheDir $name)
+        $inVault = Test-Path -LiteralPath (Join-Path $vaultDir $name)
+        if (-not $inCache -and -not $inVault) { $manifestsWereAllPresent = $false; break }
     }
 
     $manifestsReady = Ensure-LtLockedManifests -AppID $AppID -Lua $desiredLua -SteamRoot $steamPath
