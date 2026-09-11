@@ -1101,19 +1101,18 @@ if ($isUnreleased) {
     }
 }
 
-# Version-locked games only: clear a read-only appmanifest before anything else
-# runs. These are the games that have to move build, and while the flag is set
-# Steam cannot write app state, so the downgrade fails as DISK WRITE ERROR
-# before it starts. Every other game keeps whatever lock the user chose.
-if ($versionLockedGames.ContainsKey($AppID)) {
-    foreach ($lib in $libraries) {
-        $acfToFree = [System.IO.Path]::Combine($lib, "steamapps\appmanifest_$AppID.acf")
-        if (-not (Test-Path -LiteralPath $acfToFree)) { continue }
-        if (Clear-LtAcfReadOnly -AcfPath $acfToFree) {
-            Write-Host "[+] Cleared the read-only flag on appmanifest_$AppID.acf so Steam can write app state." -ForegroundColor Green
-        }
-        break
+# Clear a read-only appmanifest before anything else runs. While the flag is set
+# Steam cannot write app state, so any install, update or downgrade dies as DISK
+# WRITE ERROR before it starts. Nothing sets this flag anymore (the old
+# disable-updates lock was removed), so a read-only acf is always a leftover from
+# an older run and is cleared for whatever game is being validated.
+foreach ($lib in $libraries) {
+    $acfToFree = [System.IO.Path]::Combine($lib, "steamapps\appmanifest_$AppID.acf")
+    if (-not (Test-Path -LiteralPath $acfToFree)) { continue }
+    if (Clear-LtAcfReadOnly -AcfPath $acfToFree) {
+        Write-Host "[+] Cleared the read-only flag on appmanifest_$AppID.acf so Steam can write app state." -ForegroundColor Green
     }
+    break
 }
 
 $gameInstalled = $installDir -and (Test-Path $installDir)
