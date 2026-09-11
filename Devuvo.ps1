@@ -1662,21 +1662,26 @@ Make sure SteamTools / OpenSteamTool is installed and has run at least once, the
         Write-Host "    [!] Some of the locked build's manifests are missing, so the download may not start." -ForegroundColor Yellow
     }
 
-    # Is Steam actually ON the good build yet? Read the installed manifest for the
-    # check depot straight from the appmanifest's InstalledDepots block.
+    # Is Steam actually ON the good build yet? The authoritative value is the
+    # appmanifest's own buildid, the same number Steam shows in the game's Updates
+    # panel. The per-depot manifest in InstalledDepots is NOT reliable here: Steam
+    # keeps the pinned manifest listed for a depot even after the app has moved to
+    # a newer build, so a depot check reads "good build" while buildid is still the
+    # broken one. buildid never lies, so we gate on it.
     $acfForLock = $null
     foreach ($lib in $libraries) {
         $cand = [System.IO.Path]::Combine($lib, "steamapps\appmanifest_$AppID.acf")
         if (Test-Path -LiteralPath $cand) { $acfForLock = $cand; break }
     }
 
-    $installedManifest = $null
+    $installedBuild = $null
     if ($acfForLock) {
-        $lockDepots = Get-LtInstalledDepots -AcfPath $acfForLock
-        if ($lockDepots.ContainsKey($vl.CheckDepot)) { $installedManifest = $lockDepots[$vl.CheckDepot].manifest }
+        $acfText = [System.IO.File]::ReadAllText($acfForLock)
+        $bm = [regex]::Match($acfText, '"buildid"\s*"(\d+)"')
+        if ($bm.Success) { $installedBuild = $bm.Groups[1].Value }
     }
 
-    if ($installedManifest -eq $vl.CheckManifest) {
+    if ($installedBuild -eq $vl.BuildId) {
         Write-Host "    [+] Game is on the supported build ($($vl.BuildId)). Continuing to the report." -ForegroundColor Green
 
         # On the right build, so stop Steam pulling it forward on its own again:
@@ -1689,7 +1694,7 @@ Make sure SteamTools / OpenSteamTool is installed and has run at least once, the
         }
     }
     else {
-        $installedShown = if ($installedManifest) { $installedManifest } else { "unknown / not reported" }
+        $installedShown = if ($installedBuild) { $installedBuild } else { "unknown / not reported" }
 
         # Not on the build yet, so anything holding the download back has to come
         # off: the read-only flag an older run may have left on the appmanifest
@@ -1738,8 +1743,8 @@ The manifests for that build are already on your PC, so the download has everyth
 it needs. They are kept even if you uninstall the game, so a reinstall still works.
 
 Your installed build did not match yet:
-  needed depot $($vl.CheckDepot) manifest $($vl.CheckManifest)
-  found $installedShown
+  needed build $($vl.BuildId)
+  found build $installedShown
 "@
         Write-Host "`nPress any key to exit..."
         $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
