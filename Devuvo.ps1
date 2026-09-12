@@ -301,74 +301,92 @@ function Ensure-LtLockedManifests {
     }
     if ($missing.Count -eq 0) { return $true }
 
-    # 2. the rest come out of the build's manifest pack
-    $pack = $null
-    $local = @(
+    # 2. the rest come out of the build's manifest pack. Try any local copy first
+    #    (fast, no download), then fall back to the release. A local <AppID>.zip is
+    #    often a STALE or partial manual download, so we do not trust it: if it does
+    #    not satisfy every missing pin we move on to the authoritative release
+    #    instead of stopping with the pins still unplaced.
+    $packCandidates = @()
+    $localZips = @(
         (Join-Path $env:USERPROFILE "Downloads\$AppID.zip"),
         (Join-Path $env:TEMP "$AppID.zip")
     )
-    if ($PSScriptRoot) { $local = @((Join-Path $PSScriptRoot "$AppID.zip")) + $local }
-    foreach ($cand in $local) {
-        if (Test-Path -LiteralPath $cand) { $pack = $cand; break }
+    if ($PSScriptRoot) { $localZips = @((Join-Path $PSScriptRoot "$AppID.zip")) + $localZips }
+    foreach ($cand in $localZips) {
+        if (Test-Path -LiteralPath $cand) { $packCandidates += $cand }
     }
-    if (-not $pack) {
-        # Straight off the release, which GitHub serves from its own CDN: no
-        # rate limit on asset downloads (that only applies to api.github.com)
-        # and nothing of ours in the path to pay for or keep running. To add a
-        # game, upload <AppID>.zip to the versionlocks release and nothing here
-        # has to change.
-        $pack = Join-Path $env:TEMP "$AppID`_lock.zip"
-        $url = "https://github.com/madoiscool/lt_api_links/releases/download/versionlocks/$AppID.zip"
-        try {
-            Write-Host "    [*] Fetching the build's manifests..." -ForegroundColor DarkGray
-            $oldProgress = $ProgressPreference
-            $ProgressPreference = 'SilentlyContinue'   # the progress bar makes this crawl
-            try {
-                Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $pack -TimeoutSec 180 -ErrorAction Stop
-            }
-            finally { $ProgressPreference = $oldProgress }
-        }
-        catch {
-            Write-Host "    [-] Could not download the manifest pack: $($_.Exception.Message)" -ForegroundColor Yellow
-            return $false
-        }
-    }
-
-    $stage = Join-Path $env:TEMP "lt_lock_$AppID"
-    try {
-        if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue }
-        Expand-Archive -LiteralPath $pack -DestinationPath $stage -Force -ErrorAction Stop
-    }
-    catch {
-        Write-Host "    [-] The manifest pack could not be opened: $($_.Exception.Message)" -ForegroundColor Yellow
-        return $false
-    }
+    # Sentinel handled below: download straight off the release, which GitHub serves
+    # from its own CDN (no api.github.com rate limit) with nothing of ours to keep
+    # running. To add a game, upload <AppID>.zip to the versionlocks release.
+    $packCandidates += "@release@"
 
     $placed = 0
-    foreach ($depot in @($missing.Keys)) {
-        $name = $missing[$depot]
-        $src = Get-ChildItem -LiteralPath $stage -Filter $name -Recurse -File -ErrorAction SilentlyContinue | Select-Object -First 1
-        if (-not $src) { continue }
-        if (Copy-LtManifest -From $src.FullName -To (Join-Path $depotcache $name)) {
-            if ($vault) { try { Copy-Item -LiteralPath $src.FullName -Destination (Join-Path $vault $name) -Force } catch {} }
-            $missing.Remove($depot)
-            $placed++
-        }
-    }
-    # The pack also carries the shared and redist depots the lua lists without a
-    # pin. They are not what this is for, but the archive is already open and a
-    # manifest sitting in depotcache is one less thing Steam has to go and ask
-    # for, so any that are not there yet go in too.
     $extra = 0
-    foreach ($f in @(Get-ChildItem -LiteralPath $stage -Filter *.manifest -Recurse -File -ErrorAction SilentlyContinue)) {
-        $dest = Join-Path $depotcache $f.Name
-        if (Test-Path -LiteralPath $dest) { continue }
-        if (Copy-LtManifest -From $f.FullName -To $dest) {
-            if ($vault) { try { Copy-Item -LiteralPath $f.FullName -Destination (Join-Path $vault $f.Name) -Force } catch {} }
-            $extra++
+    foreach ($cand in $packCandidates) {
+        if ($missing.Count -eq 0) { break }
+
+        if ($cand -eq "@release@") {
+            $pack = Join-Path $env:TEMP "$AppID`_lock.zip"
+            $url = "https://github.com/madoiscool/lt_api_links/releases/download/versionlocks/$AppID.zip"
+            try {
+                Write-Host "    [*] Fetching the build's manifests..." -ForegroundColor DarkGray
+                $oldProgress = $ProgressPreference
+                $ProgressPreference = 'SilentlyContinue'   # the progress bar makes this crawl
+                try {
+                    Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $pack -TimeoutSec 180 -ErrorAction Stop
+                }
+                finally { $ProgressPreference = $oldProgress }
+            }
+            catch {
+                Write-Host "    [-] Could not download the manifest pack: $($_.Exception.Message)" -ForegroundColor Yellow
+                continue
+            }
         }
+        else {
+            $pack = $cand
+        }
+
+        $stage = Join-Path $env:TEMP "lt_lock_$AppID"
+        try {
+            if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue }
+            Expand-Archive -LiteralPath $pack -DestinationPath $stage -Force -ErrorAction Stop
+        }
+        catch {
+            Write-Host "    [-] A manifest pack could not be opened: $($_.Exception.Message)" -ForegroundColor Yellow
+            continue
+        }
+
+        foreach ($depot in @($missing.Keys)) {
+            $name = $missing[$depot]
+            $src = Get-ChildItem -LiteralPath $stage -Filter $name -Recurse -File -ErrorAction SilentlyContinue | Select-Object -First 1
+            if (-not $src) { continue }
+            # Keep our permanent vault copy regardless of the depotcache write. The
+            # vault lives in LOCALAPPDATA, so it never needs elevation and Steam never
+            # prunes it; even if the depotcache copy is blocked, the vault copy lets
+            # the next run re-seed and lets the gate recognise this machine as set up.
+            $inVault = $false
+            if ($vault) {
+                try { Copy-Item -LiteralPath $src.FullName -Destination (Join-Path $vault $name) -Force; $inVault = $true } catch {}
+            }
+            $inCache = Copy-LtManifest -From $src.FullName -To (Join-Path $depotcache $name)
+            if ($inCache) { $placed++ }
+            if ($inCache -or $inVault) { $missing.Remove($depot) }
+        }
+        # The pack also carries the shared and redist depots the lua lists without a
+        # pin. They are not what this is for, but the archive is already open and a
+        # manifest sitting in depotcache is one less thing Steam has to go and ask
+        # for, so any that are not there yet go in too (and into the vault).
+        foreach ($f in @(Get-ChildItem -LiteralPath $stage -Filter *.manifest -Recurse -File -ErrorAction SilentlyContinue)) {
+            if ($vault) {
+                $vdest = Join-Path $vault $f.Name
+                if (-not (Test-Path -LiteralPath $vdest)) { try { Copy-Item -LiteralPath $f.FullName -Destination $vdest -Force } catch {} }
+            }
+            $dest = Join-Path $depotcache $f.Name
+            if (Test-Path -LiteralPath $dest) { continue }
+            if (Copy-LtManifest -From $f.FullName -To $dest) { $extra++ }
+        }
+        try { Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue } catch {}
     }
-    try { Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue } catch {}
 
     if ($extra -gt 0) {
         Write-Host "    [+] Also placed $extra shared depot manifest(s) from the pack." -ForegroundColor DarkGray
