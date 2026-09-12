@@ -383,6 +383,78 @@ function Ensure-LtLockedManifests {
     return $true
 }
 
+# RE Engine + Denuvo titles need REFramework's dinput8.dll in the game folder or
+# they crash on new-game. The one dll below is the newest REFramework build and
+# covers every one of these games (it detects the game at runtime), so we drop
+# that single file rather than a per-game one. We place it here so the user never
+# has to copy it by hand: without it they place it themselves, then launch the
+# game outside the app, and the save carry-over never runs.
+$reframeworkDinput8Games = @("2246340", "2852190", "3764200", "3357650", "2054970", "3500390", "2638890")
+$reframeworkDinput8Url    = "https://github.com/madoiscool/lt_api_links/releases/download/reframework/dinput8.dll"
+$reframeworkDinput8Sha256 = "1DFE37DEDE668B5A969833DDFB2BBC933C83074E86FB03D46015690ADF8A29F3"
+
+function Get-LtReframeworkDll {
+    # Return a local path to the verified dinput8.dll, downloading it once into a
+    # cache under LOCALAPPDATA and re-using it after. Returns $null on any failure.
+    param([string]$Url, [string]$Sha256)
+    $cacheDir = Join-Path $env:LOCALAPPDATA "LuaTools\reframework"
+    $cached   = Join-Path $cacheDir "dinput8.dll"
+    try {
+        if (Test-Path -LiteralPath $cached) {
+            $have = (Get-FileHash -LiteralPath $cached -Algorithm SHA256).Hash
+            if ($have -eq $Sha256) { return $cached }
+        }
+    }
+    catch { }
+    try {
+        if (-not (Test-Path -LiteralPath $cacheDir)) {
+            New-Item -ItemType Directory -Path $cacheDir -Force | Out-Null
+        }
+        $tmp = Join-Path $cacheDir ("dl_" + [guid]::NewGuid().ToString("N") + ".tmp")
+        $old = $ProgressPreference; $ProgressPreference = "SilentlyContinue"
+        try {
+            Invoke-WebRequest -UseBasicParsing -Uri $Url -OutFile $tmp -TimeoutSec 180 -ErrorAction Stop
+        }
+        finally { $ProgressPreference = $old }
+        $dl = (Get-FileHash -LiteralPath $tmp -Algorithm SHA256).Hash
+        if ($dl -ne $Sha256) {
+            Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+            return $null
+        }
+        Move-Item -LiteralPath $tmp -Destination $cached -Force
+        return $cached
+    }
+    catch {
+        return $null
+    }
+}
+
+function Ensure-LtReframeworkDll {
+    # Drop the universal REFramework dinput8.dll into the game folder, but only when
+    # it isn't already there. If the folder already has a dinput8.dll we leave it
+    # and skip the download entirely, so the 23 MB file is only fetched when it is
+    # actually missing. Best effort: never throws.
+    param([string]$InstallDir, [string]$Url, [string]$Sha256)
+    if (-not $InstallDir -or -not (Test-Path -LiteralPath $InstallDir)) { return }
+    $target = Join-Path $InstallDir "dinput8.dll"
+    if (Test-Path -LiteralPath $target) {
+        Write-Host "    [+] dinput8.dll is already in the game folder; leaving it as is." -ForegroundColor Green
+        return
+    }
+    $src = Get-LtReframeworkDll -Url $Url -Sha256 $Sha256
+    if (-not $src) {
+        Write-Host "    [!] Could not fetch REFramework dinput8.dll; the game may crash until it is placed." -ForegroundColor Yellow
+        return
+    }
+    try {
+        Copy-Item -LiteralPath $src -Destination $target -Force -ErrorAction Stop
+        Write-Host "    [+] Placed REFramework dinput8.dll into the game folder." -ForegroundColor Green
+    }
+    catch {
+        Write-Host "    [!] Could not place REFramework dinput8.dll: $($_.Exception.Message)" -ForegroundColor Yellow
+    }
+}
+
 # Show-LuaError — surface a hard-stop error BOTH in the console (status pane)
 # and as a blocking Windows popup in the user's face, because most users ignore
 # the scrolling console text. $Title is the popup caption, $Message is the body
@@ -1120,6 +1192,10 @@ $gameInstalled = $installDir -and (Test-Path $installDir)
 if ($gameInstalled) {
     Write-Host "[+] Found Game: $gameName" -ForegroundColor Green
     Write-Host "[+] Install Directory: $installDir" -ForegroundColor Green
+    if ($reframeworkDinput8Games -contains $AppID) {
+        Write-Host "`n[*] Placing REFramework dinput8.dll..." -ForegroundColor Cyan
+        Ensure-LtReframeworkDll -InstallDir $installDir -Url $reframeworkDinput8Url -Sha256 $reframeworkDinput8Sha256
+    }
 }
 else {
     if (-not $isUnreleased) {
