@@ -1580,6 +1580,13 @@ $conflictingNames = @(
     "cracksteam_api64.dll"
 )
 
+# For RE Engine + Denuvo titles dinput8.dll IS the REFramework helper we place on
+# purpose, so it must not be scanned as a conflict and deleted for those games. It
+# stays a conflict for every other game.
+if ($reframeworkDinput8Games -contains $AppID) {
+    $conflictingNames = @($conflictingNames | Where-Object { $_ -ne "dinput8.dll" })
+}
+
 $conflictingFound = @()
 foreach ($name in $conflictingNames) {
     $hits = Get-ChildItem -Path $installDir -Recurse -Filter $name -ErrorAction SilentlyContinue
