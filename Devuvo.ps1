@@ -2213,23 +2213,14 @@ $jsonReport = [ordered]@{
 } | ConvertTo-Json -Depth 4
 
 try {
-    $tempFile = [System.IO.Path]::GetTempFileName()
-    $jsonReport | Set-Content -Path $tempFile -Encoding UTF8
+    $headers = @{ "Accept" = "application/json" }
 
-    $headers = @{
-        "Linx-Randomize" = "yes"
-        "Accept"         = "application/json"
-    }
+    # UTF8.GetBytes gives clean UTF-8 with no BOM, so the store parses it directly.
+    $bodyBytes = [System.Text.Encoding]::UTF8.GetBytes($jsonReport)
+    $response = Invoke-RestMethod -Uri "https://luastools.xyz/report/upload" -Method Post -Headers $headers -Body $bodyBytes -ContentType "application/json"
 
-    $fileBytes = [System.IO.File]::ReadAllBytes($tempFile)
-    $response = Invoke-RestMethod -Uri "https://paste.rtech.support/upload/report.json" -Method Put -Headers $headers -Body $fileBytes -ContentType "application/json"
-
-    Remove-Item $tempFile -Force -ErrorAction SilentlyContinue
-
-    if ($response.url) {
-        $pasteUrl = $response.url
-        # Extract just the code from the URL (e.g. mc779imw from https://paste.rtech.support/mc779imw.txt)
-        $pasteCode = ($pasteUrl -split '/')[-1] -replace '\.[^.]+$', ''
+    if ($response.code) {
+        $pasteCode = $response.code
 
         Set-Clipboard -Value $pasteCode
         Write-Host "`n    [+] Report uploaded successfully!" -ForegroundColor Green
@@ -2260,7 +2251,7 @@ try {
         }
     }
     else {
-        Write-Host "    [-] Upload succeeded but no URL returned." -ForegroundColor Yellow
+        Write-Host "    [-] Upload succeeded but no code returned." -ForegroundColor Yellow
         Write-Host "    Response: $($response | ConvertTo-Json -Compress)" -ForegroundColor DarkGray
     }
 }
