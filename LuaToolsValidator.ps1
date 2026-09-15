@@ -130,12 +130,8 @@ New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
 New-Item -ItemType Directory -Force -Path $installRoot | Out-Null
 
 $validatorUrls = @(
-    # Cloudflare-edge mirror first: it fetches the exe server-side, so a network
-    # that mangles the direct github.com TLS handshake ("connection closed") still
-    # gets the file. Falls through to github if the worker is ever down.
-    "https://luastools.xyz/validator.exe",
     "https://github.com/Tesla697/LuaToolsValidator/releases/latest/download/LuaToolsValidator.exe",
-    "https://github.com/Tesla697/LuaToolsValidator/releases/download/v1.0.1/LuaToolsValidator.exe"
+    "https://github.com/Tesla697/LuaToolsValidator/releases/download/v1.0.0/LuaToolsValidator.exe"
 )
 
 $downloaded = $false
@@ -349,14 +345,7 @@ if ($LuaToolsInstallOnly) {
 }
 else {
     Write-Host "[+] Starting LuaTools Validator for AppID $AppID..." -ForegroundColor Green
-    # Auto-activate: when a per-ticket webhook is supplied ($LuaValidatorWebhook),
-    # pass it through so the validator posts the D-Report back to the ticket on its
-    # own. This makes the one-liner a full install+run+submit for first-time users.
-    $ltArgs = @("--appid", "$AppID", "--autorun")
-    if ($LuaValidatorWebhook -and -not [string]::IsNullOrWhiteSpace($LuaValidatorWebhook)) {
-        $ltArgs += @("--wh", "$LuaValidatorWebhook")
-    }
-    Start-LuaToolsValidator -FilePath $exePath -ArgumentList $ltArgs
+    Start-LuaToolsValidator -FilePath $exePath -ArgumentList @("--appid", "$AppID", "--autorun")
 
     # Freeze the game so a later Steam update can't break the activation.
     # Opt out with $LuaToolsNoLock=1.
