@@ -1375,6 +1375,31 @@ else {
     Write-Host "    [-] OpenSteamTool is not installed/active (needed for TokeerDRM codes)." -ForegroundColor Yellow
 }
 
+# Require the OFFICIAL OpenSteamTool engine (OpenSteamTool.dll) before going any
+# further. An mktl-only setup does NOT count here on purpose. Without a real engine
+# the run would silently fall back to writing tokeer_launcher launch options, which
+# we don't want; stop and tell the user how to set the engine up instead. Force-GBE
+# titles use the launcher path by design (OST's ticket fails for them) and
+# unreleased games are handled separately, so both are exempt.
+$ostOfficialActive = (Test-Path (Join-Path $steamPath "OpenSteamTool.dll")) -and $ostHijack
+if (-not $ostOfficialActive -and -not $isForceGbe -and -not $isUnreleased) {
+    Show-LuaError -Title "Set up your activation engine first" -Message @"
+OpenSteamTool isn't installed, so activation can't continue.
+
+Set it up one of these two ways, then run this again:
+
+  1. Open the TokeerDRM app and let it install / repair OpenSteamTool
+     (use the Fix DLL button if it prompts you).
+
+  2. Open the LuaTools app, go to the Mode section, and choose BetterSteamTools.
+
+Once OpenSteamTool is active, start the validation again.
+"@
+    Write-Host "`nPress any key to exit..."
+    $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+    exit
+}
+
 # 5. Gate check - stop if something is wrong
 $issues = @()
 if (-not $gameInstalled) {
