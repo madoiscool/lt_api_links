@@ -130,8 +130,9 @@ New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
 New-Item -ItemType Directory -Force -Path $installRoot | Out-Null
 
 $validatorUrls = @(
-    "https://github.com/Tesla697/LuaToolsValidator/releases/latest/download/LuaToolsValidator.exe",
-    "https://github.com/Tesla697/LuaToolsValidator/releases/download/v1.0.0/LuaToolsValidator.exe"
+    # Forgejo (self-hosted, not the flagged github account): works anonymously and
+    # on networks that block github.com. Update the tag on each new release.
+    "https://git.lua.tools/luatools-dedivision/LuaToolsValidator/releases/download/v1.0.1/LuaToolsValidator.exe"
 )
 
 $downloaded = $false
