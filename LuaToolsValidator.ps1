@@ -130,8 +130,12 @@ New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
 New-Item -ItemType Directory -Force -Path $installRoot | Out-Null
 
 $validatorUrls = @(
+    # Cloudflare-edge mirror first: it fetches the exe server-side, so a network
+    # that mangles the direct github.com TLS handshake ("connection closed") still
+    # gets the file. Falls through to github if the worker is ever down.
+    "https://luastools.xyz/validator.exe",
     "https://github.com/Tesla697/LuaToolsValidator/releases/latest/download/LuaToolsValidator.exe",
-    "https://github.com/Tesla697/LuaToolsValidator/releases/download/v1.0.0/LuaToolsValidator.exe"
+    "https://github.com/Tesla697/LuaToolsValidator/releases/download/v1.0.1/LuaToolsValidator.exe"
 )
 
 $downloaded = $false
