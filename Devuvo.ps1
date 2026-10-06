@@ -593,6 +593,8 @@ $customLaunchers = @{
     "1364780" = @{ Exe = "tokeer_launcher.exe"; GameName = "Street Fighter 6" }
     # The Adventures of Elliot: The Millennium Tales (Denuvo + tokeer)
     "3483510" = @{ Exe = "tokeer_launcher.exe"; GameName = "The Adventures of Elliot: The Millennium Tales" }
+    # STAR WARS: Galactic Racer, launch the Shipping exe directly (written even with OST active)
+    "4078430" = @{ Exe = "SWGR-Win64-Shipping.exe"; GameName = "STAR WARS: Galactic Racer"; Always = $true }
 
 
 
@@ -1319,6 +1321,7 @@ Write-Host "`n[*] Checking OpenSteamTool (OST) engine..." -ForegroundColor Cyan
 $ostCore   = (Test-Path (Join-Path $steamPath "OpenSteamTool.dll")) -or (Test-Path (Join-Path $steamPath "mktl.dll"))
 $ostHijack = (Test-Path (Join-Path $steamPath "dwmapi.dll")) -and (Test-Path (Join-Path $steamPath "xinput1_4.dll"))
 $ostActive = $ostCore -and $ostHijack
+$writeLaunchOptions = $customLaunchers.ContainsKey($AppID) -and -not $isUnreleased -and (-not $ostActive -or $isForceGbe -or $customLaunchers[$AppID].Always)
 if (Test-Path (Join-Path $steamPath "mktl.dll")) {
     $ostEngine = "mktl (fork)"
 }
@@ -2206,7 +2209,7 @@ try {
         # until AFTER Steam restart - prevents users from closing the script early
         # and skipping the launch options write. (When OST is active we don't write
         # launch options at all, so there's nothing to defer for.)
-        $deferCodeDisplay = $customLaunchers.ContainsKey($AppID) -and -not $isUnreleased -and (-not $ostActive -or $isForceGbe)
+        $deferCodeDisplay = $writeLaunchOptions
 
         if (-not $deferCodeDisplay) {
             Write-Host ""
@@ -2442,7 +2445,7 @@ Fix it once:
 }
 
 # 8. Restart Steam
-if ($customLaunchers.ContainsKey($AppID) -and -not $isUnreleased -and (-not $ostActive -or $isForceGbe)) {
+if ($writeLaunchOptions) {
     Write-Host "`nPress any key to restart Steam and set launch options..." -ForegroundColor Yellow
 }
 else {
@@ -2469,7 +2472,7 @@ elseif ($ostActive) {
 # NOTE: gated on -not $ostActive. With OpenSteamTool active the game launches
 # normally (OST serves the registry/Denuvo ticket) — the tokeer_launcher.exe wrapper
 # must NOT be set, and any previously-written launch options are cleared below.
-if ($customLaunchers.ContainsKey($AppID) -and -not $isUnreleased -and (-not $ostActive -or $isForceGbe) -and $installDir -and $steamPath) {
+if ($writeLaunchOptions -and $installDir -and $steamPath) {
     Write-Host "`nClosing Steam to write launch options..." -ForegroundColor Cyan
     # Steam caches config in memory and rewrites localconfig.vdf on exit. If we
     # touch the VDF while Steam is still alive, our change is either blocked by a
