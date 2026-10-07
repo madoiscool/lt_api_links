@@ -595,6 +595,8 @@ $customLaunchers = @{
     "3483510" = @{ Exe = "tokeer_launcher.exe"; GameName = "The Adventures of Elliot: The Millennium Tales" }
     # STAR WARS: Galactic Racer, launch the Shipping exe directly (written even with OST active)
     "4078430" = @{ Exe = "SWGR-Win64-Shipping.exe"; GameName = "STAR WARS: Galactic Racer"; Always = $true }
+    # ACE COMBAT 8: WINGS OF THEVE, launch AceCombat8.exe directly (written even with OST active)
+    "2288340" = @{ Exe = "AceCombat8.exe"; GameName = "ACE COMBAT 8: WINGS OF THEVE"; Always = $true }
 
 
 
