@@ -2159,6 +2159,77 @@ $hwComponents = [ordered]@{
 }
 
 
+# Ticket auto-submit. A Tokeer ticket's command leaves ticket.json behind. When it
+# matches this AppID, the D-Report goes straight to the ticket and the bot's answer
+# shows here, so nobody has to paste the code. LuaTools Validator fills its code box
+# from the last "D-Report Code: X" line, which is how VALIDATED ends up in it.
+function Send-ReportToTicket {
+    param([string]$Code)
+    $ticketFile = Join-Path $env:LOCALAPPDATA "LuaToolsValidator\ticket.json"
+    if (-not $Code -or -not (Test-Path -LiteralPath $ticketFile)) { return }
+    try {
+        $t = Get-Content -LiteralPath $ticketFile -Raw | ConvertFrom-Json
+        $token = "$($t.ticket)".ToLower()
+        $age = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - [long]$t.created
+    }
+    catch { return }
+    if ($token -notmatch '^[a-z0-9]{20,40}$' -or "$($t.appid)" -ne "$AppID" -or $age -gt 7200 -or $age -lt -300) { return }
+
+    Write-Host "`n[*] Sending your report to your ticket..." -ForegroundColor Cyan
+    try {
+        $claimBody = [System.Text.Encoding]::UTF8.GetBytes((@{ ticket = $token; code = $Code } | ConvertTo-Json -Compress))
+        $null = Invoke-RestMethod -Uri "https://luastools.xyz/report/claim" -Method Post -Body $claimBody -ContentType "application/json" -TimeoutSec 20
+    }
+    catch {
+        Write-Host "    [-] Couldn't send it to your ticket automatically. Paste the code above in your ticket." -ForegroundColor Yellow
+        return
+    }
+
+    Write-Host "    [+] Sent. Waiting for your ticket to check it..." -ForegroundColor Green
+    $verdict = $null
+    $deadline = (Get-Date).AddMinutes(3)
+    $lastNote = Get-Date
+    while ((Get-Date) -lt $deadline) {
+        Start-Sleep -Seconds 2
+        try {
+            $v = Invoke-RestMethod -Uri "https://luastools.xyz/report/verdict/$token" -TimeoutSec 10 -Headers @{ "Cache-Control" = "no-cache" }
+            if (@("ok", "fail", "closed") -contains $v.state -and "$($v.code)" -eq $Code) { $verdict = $v; break }
+        }
+        catch {}
+        if (((Get-Date) - $lastNote).TotalSeconds -ge 10) {
+            Write-Host "    [*] Still waiting for your ticket..." -ForegroundColor DarkGray
+            $lastNote = Get-Date
+        }
+    }
+
+    if (-not $verdict) {
+        Write-Host "    [*] No answer yet. Check your ticket in Discord, and if nothing happened there, paste the code above." -ForegroundColor Yellow
+        return
+    }
+    if ($verdict.state -eq "ok") {
+        Write-Host ""
+        Write-Host "    ============================================" -ForegroundColor Green
+        Write-Host "    ||   D-Report Code: VALIDATED" -ForegroundColor Green
+        Write-Host "    ============================================" -ForegroundColor Green
+        Write-Host "    Validated! Go back to Discord, your ticket is continuing on its own." -ForegroundColor Green
+        Remove-Item -LiteralPath $ticketFile -Force -ErrorAction SilentlyContinue
+        return
+    }
+    if ($verdict.state -eq "closed") {
+        Write-Host "    [-] $($verdict.message)" -ForegroundColor Yellow
+        Remove-Item -LiteralPath $ticketFile -Force -ErrorAction SilentlyContinue
+        return
+    }
+    Write-Host ""
+    Write-Host "    [-] Your ticket couldn't validate this report:" -ForegroundColor Red
+    foreach ($e in @($verdict.errors)) {
+        if ($e) { Write-Host "        - $e" -ForegroundColor Yellow }
+    }
+    if ($verdict.message) { Write-Host "    $($verdict.message)" -ForegroundColor Yellow }
+    Write-Host "    D-Report Code: NOT-VALIDATED" -ForegroundColor Red
+}
+
+
 # 8. Upload report
 Write-Host "`n[*] Uploading report to give report code..." -ForegroundColor Cyan
 
@@ -2227,6 +2298,7 @@ try {
             Write-Host "    ============================================" -ForegroundColor Magenta
             Write-Host ""
             Write-Host "    (copied to clipboard)" -ForegroundColor Green
+            Send-ReportToTicket -Code $pasteCode
         }
         else {
             Write-Host "    [*] D-Report Code will be shown after Steam restart + launch options setup." -ForegroundColor Cyan
@@ -2670,6 +2742,7 @@ if ($deferCodeDisplay -and $pasteCode) {
     Write-Host "    ============================================" -ForegroundColor Magenta
     Write-Host ""
     Write-Host "    (copied to clipboard)" -ForegroundColor Green
+    Send-ReportToTicket -Code $pasteCode
     Write-Host ""
     Write-Host "Press any key to exit..." -ForegroundColor Yellow
     $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")

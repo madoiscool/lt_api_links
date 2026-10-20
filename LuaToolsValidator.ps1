@@ -340,7 +340,27 @@ To see the raw Windows error, run the file manually:
 
 Install-DotNet10DesktopRuntime | Out-Null
 
-if ($LuaToolsInstallOnly) {
+# Ticket command: leave the ticket token where Devuvo.ps1 can find it, so the
+# D-Report goes straight to the ticket. A file and not an env var, because the
+# Validator restarts itself as admin and that drops the environment.
+$ticketToken = "$LuaToolsTicket".Trim().ToLower()
+if ($ticketToken -match '^[a-z0-9]{20,40}$' -and "$AppID" -match '^\d+$') {
+    try {
+        $ticketDir = Join-Path $env:LOCALAPPDATA "LuaToolsValidator"
+        New-Item -ItemType Directory -Force -Path $ticketDir | Out-Null
+        [ordered]@{
+            ticket  = $ticketToken
+            appid   = "$AppID"
+            created = [long]([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())
+        } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $ticketDir "ticket.json") -Encoding ASCII
+    }
+    catch {
+        Write-Host "    [!] Couldn't link this run to your ticket, you'll need to paste the code." -ForegroundColor Yellow
+    }
+    Write-Host "[+] Starting LuaTools Validator for your ticket (AppID $AppID)..." -ForegroundColor Green
+    Start-LuaToolsValidator -FilePath $exePath -ArgumentList @("--appid", "$AppID", "--autorun")
+}
+elseif ($LuaToolsInstallOnly) {
     Write-Host "[+] Starting LuaTools Validator..." -ForegroundColor Green
     Start-LuaToolsValidator -FilePath $exePath
 }
