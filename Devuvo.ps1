@@ -2211,7 +2211,9 @@ function Send-ReportToTicket {
         Write-Host "    ============================================" -ForegroundColor Green
         Write-Host "    ||   D-Report Code: VALIDATED" -ForegroundColor Green
         Write-Host "    ============================================" -ForegroundColor Green
-        Write-Host "    Validated! Go back to Discord, your ticket is continuing on its own." -ForegroundColor Green
+        $okText = "Go back to Discord, your ticket is continuing on its own."
+        if ($verdict.message -and "$($verdict.message)" -ne "Validated") { $okText = "$($verdict.message)" }
+        Write-Host "    Validated! $okText" -ForegroundColor Green
         Remove-Item -LiteralPath $ticketFile -Force -ErrorAction SilentlyContinue
         return
     }
