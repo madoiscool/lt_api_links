@@ -778,6 +778,7 @@ $reportData = [ordered]@{
     HasGoldberg          = $false
     GoldbergFiles        = @()
     ConflictingFiles     = @()
+    LuaDirs              = @()
 
     WindowsUpdateBlocked = $false
     OstActive            = $false
@@ -1675,6 +1676,42 @@ else {
     Write-Host "    [+] No conflicting files detected." -ForegroundColor Green
 }
 
+# Folders OST really loads luas from: <Steam>\config\stplug-in (its default) and any
+# [lua] paths in opensteamtool.toml. Only if none exist, search the Steam folder, and
+# then keep every match. Taking the first "stplug-in" anywhere under Steam could land
+# on a backup or plugin folder and report the lua as missing when it isn't.
+function Get-LuaDirs {
+    $found = New-Object System.Collections.Generic.List[string]
+    $candidates = @(Join-Path $steamPath "config\stplug-in")
+    $toml = Join-Path $steamPath "opensteamtool.toml"
+    if (Test-Path -LiteralPath $toml) {
+        $raw = Get-Content -LiteralPath $toml -Raw
+        $section = [regex]::Match($raw, '(?ms)^\s*\[lua\]\s*$(.*?)(?=^\s*\[|\z)')
+        $paths = if ($section.Success) { [regex]::Match($section.Groups[1].Value, '(?ms)^\s*paths\s*=\s*\[(.*?)\]') }
+        if ($paths -and $paths.Success) {
+            foreach ($m in [regex]::Matches($paths.Groups[1].Value, '"([^"]+)"|''([^'']+)''')) {
+                $p = if ($m.Groups[1].Success) { $m.Groups[1].Value } else { $m.Groups[2].Value }
+                if (-not [System.IO.Path]::IsPathRooted($p)) { $p = Join-Path $steamPath $p }
+                $candidates += $p
+            }
+        }
+    }
+    foreach ($c in $candidates) {
+        if (Test-Path -LiteralPath $c -PathType Container) { $found.Add([System.IO.Path]::GetFullPath($c)) }
+    }
+    if ($found.Count -eq 0) {
+        Get-ChildItem -Path $steamPath -Directory -Filter "stplug-in" -Recurse -Depth 3 -ErrorAction SilentlyContinue |
+            ForEach-Object { $found.Add($_.FullName) }
+    }
+    $seen = @{}
+    $out = @()
+    foreach ($d in $found) {
+        $key = $d.TrimEnd('\', '/').ToLowerInvariant()
+        if (-not $seen.ContainsKey($key)) { $seen[$key] = $true; $out += $d }
+    }
+    return , $out
+}
+
 # 6. stplug-in lua modification
 if ($isUnreleased) {
     # Unreleased game - no AppID registered in SteamTools yet, skip lua check
@@ -1690,7 +1727,8 @@ elseif ($versionLockedGames.ContainsKey($AppID)) {
     $vl = $versionLockedGames[$AppID]
     Write-Host "`n[*] $($vl.GameName): enforcing version lock to build $($vl.BuildId) (its latest Steam build breaks activation)..." -ForegroundColor Cyan
 
-    $stpluginDir = Get-ChildItem -Path $steamPath -Directory -Filter "stplug-in" -Recurse -Depth 3 -ErrorAction SilentlyContinue | Select-Object -First 1
+    $luaDirs = Get-LuaDirs
+    $stpluginDir = if ($luaDirs.Count -gt 0) { Get-Item -LiteralPath $luaDirs[0] }
     if (-not $stpluginDir) {
         Show-LuaError -Title "SteamTools not found" -Message @"
 Could not find the Steam stplug-in folder, so the version lock can't be written.
@@ -1842,18 +1880,21 @@ else {
     # which is why the old disable-updates path was dropped.
     Write-Host "`n[*] Checking stplug-in lua (tracks latest manifest)..." -ForegroundColor Cyan
 
-    $stpluginDir = Get-ChildItem -Path $steamPath -Directory -Filter "stplug-in" -Recurse -Depth 3 -ErrorAction SilentlyContinue | Select-Object -First 1
+    $luaDirs = Get-LuaDirs
+    $reportData.LuaDirs = $luaDirs
 
-    if ($stpluginDir) {
-        Write-Host "    [+] Found stplug-in directory at: $($stpluginDir.FullName)" -ForegroundColor Green
-
-        $targetLuaFile = Join-Path $stpluginDir.FullName "$AppID.lua"
-        if (Test-Path $targetLuaFile) {
-            $luaFiles = @(Get-Item $targetLuaFile)
-        }
-        else {
-            $luaFiles = Get-ChildItem -Path $stpluginDir.FullName -Filter "*.lua" -ErrorAction SilentlyContinue | Where-Object {
-                $_.Name -ne "Steamtools.lua" -and (Get-Content $_.FullName -Raw) -match "addappid\(\s*$AppID\b"
+    if ($luaDirs.Count -gt 0) {
+        $luaFiles = @()
+        foreach ($dir in $luaDirs) {
+            Write-Host "    [+] Checking lua folder: $dir" -ForegroundColor Green
+            $targetLuaFile = Join-Path $dir "$AppID.lua"
+            if (Test-Path -LiteralPath $targetLuaFile) {
+                $luaFiles += Get-Item -LiteralPath $targetLuaFile
+            }
+            else {
+                $luaFiles += @(Get-ChildItem -LiteralPath $dir -Filter "*.lua" -ErrorAction SilentlyContinue | Where-Object {
+                    $_.Name -ne "Steamtools.lua" -and (Get-Content -LiteralPath $_.FullName -Raw) -match "addappid\(\s*$AppID\b"
+                })
             }
         }
     }
@@ -2247,6 +2288,7 @@ $jsonReport = [ordered]@{
     goldberg_files          = $reportData.GoldbergFiles
     conflicting_files       = $reportData.ConflictingFiles
     lua_file_found          = $reportData.LuaFileFound
+    lua_dirs                = $reportData.LuaDirs
     updates_disabled        = $reportData.UpdatesDisabled
     windows_update_blocked  = $reportData.WindowsUpdateBlocked
     windows_update_services = $wuDetails
