@@ -190,12 +190,36 @@ Write-Host "[+] LuaTools Validator is updated." -ForegroundColor Green
 Unblock-File -LiteralPath $exePath -ErrorAction SilentlyContinue
 
 function Test-DotNet10DesktopRuntime {
+    $roots = @("$env:ProgramFiles\dotnet", "${env:ProgramFiles(x86)}\dotnet")
+    foreach ($root in $roots) {
+        if ($root -and (Get-ChildItem -Path (Join-Path $root "shared\Microsoft.WindowsDesktop.App") -Directory -Filter "10.*" -ErrorAction SilentlyContinue)) {
+            return $true
+        }
+    }
     try {
         $runtimes = & dotnet --list-runtimes 2>$null
         return [bool]($runtimes | Where-Object { $_ -match '^Microsoft\.WindowsDesktop\.App\s+10\.' })
     }
     catch {
         return $false
+    }
+}
+
+function Install-DotNet10FromMicrosoft {
+    $arch = if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64" -or $env:PROCESSOR_ARCHITEW6432 -eq "ARM64") { "arm64" } else { "x64" }
+    $url = "https://aka.ms/dotnet/10.0/windowsdesktop-runtime-win-$arch.exe"
+    $installer = Join-Path $env:TEMP "windowsdesktop-runtime-10-win-$arch.exe"
+    Write-Host "[*] Downloading .NET 10 Desktop Runtime from Microsoft..." -ForegroundColor Cyan
+    Write-Host "    $url" -ForegroundColor DarkGray
+    $ProgressPreference = "SilentlyContinue"
+    Invoke-WebRequest -Uri $url -OutFile $installer -UseBasicParsing -TimeoutSec 300 -ErrorAction Stop
+    Unblock-File -LiteralPath $installer -ErrorAction SilentlyContinue
+    Write-Host "[*] Installing .NET 10 Desktop Runtime, this can take a minute..." -ForegroundColor Cyan
+    $p = Start-Process -FilePath $installer -ArgumentList "/install", "/quiet", "/norestart" -Wait -PassThru
+    Remove-Item -LiteralPath $installer -Force -ErrorAction SilentlyContinue
+    # 3010 = installed, reboot pending. 1641 = installed, reboot started.
+    if ($p.ExitCode -notin 0, 3010, 1641) {
+        throw "installer exited with code $($p.ExitCode)"
     }
 }
 
@@ -208,13 +232,19 @@ function Install-DotNet10DesktopRuntime {
     Write-Host "[*] .NET 10 Desktop Runtime is missing. Installing it now..." -ForegroundColor Cyan
     try {
         $winget = Get-Command winget -ErrorAction SilentlyContinue
-        if (-not $winget) {
-            throw "winget is not available"
+        if ($winget) {
+            try {
+                & winget install --id Microsoft.DotNet.DesktopRuntime.10 -e --accept-package-agreements --accept-source-agreements --silent
+                if ($LASTEXITCODE -ne 0) {
+                    throw "winget exited with code $LASTEXITCODE"
+                }
+            }
+            catch {
+                Write-Host "    [!] winget install failed ($($_.Exception.Message)), downloading it directly." -ForegroundColor Yellow
+            }
         }
-
-        & winget install --id Microsoft.DotNet.DesktopRuntime.10 -e --accept-package-agreements --accept-source-agreements --silent
-        if ($LASTEXITCODE -ne 0) {
-            throw "winget exited with code $LASTEXITCODE"
+        if (-not (Test-DotNet10DesktopRuntime)) {
+            Install-DotNet10FromMicrosoft
         }
     }
     catch {
