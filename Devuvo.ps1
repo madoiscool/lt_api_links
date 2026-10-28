@@ -1059,6 +1059,7 @@ Write-Host "Scanning $($libraries.Count) Steam library folders..." -ForegroundCo
 
 # 2. Check if AppID is installed
 $installDir = $null
+$gameLibrary = $null
 $gameName = $null
 
 if ($isUnreleased) {
@@ -1141,8 +1142,23 @@ if ($isUnreleased) {
         Write-Host "    Make sure the clean game files are extracted and the main exe exists on this PC." -ForegroundColor Yellow
     }
 } else {
-    # Normal released game: use appmanifest
+    # Normal released game: use appmanifest. A library can hold a leftover
+    # appmanifest from an old install whose folder is gone, so one whose game
+    # folder exists wins; a leftover is only used when nothing better turns up.
+    $acfWithFolder = @()
+    $acfLeftover = @()
     foreach ($lib in $libraries) {
+        $manifestPath = [System.IO.Path]::Combine($lib, "steamapps\appmanifest_$AppID.acf")
+        if (-not (Test-Path -LiteralPath $manifestPath)) { continue }
+        $dirMatch = [regex]::Match([System.IO.File]::ReadAllText($manifestPath), $manifestInstallDirPattern)
+        if ($dirMatch.Success -and (Test-Path -LiteralPath ([System.IO.Path]::Combine($lib, "steamapps\common\$($dirMatch.Groups[1].Value)")))) {
+            $acfWithFolder += $lib
+        }
+        else {
+            $acfLeftover += $lib
+        }
+    }
+    foreach ($lib in ($acfWithFolder + $acfLeftover)) {
         $manifestPath = [System.IO.Path]::Combine($lib, "steamapps\appmanifest_$AppID.acf")
         if (Test-Path -LiteralPath $manifestPath) {
             # Same reason as libraryfolders.vdf above: installdir and name are
@@ -1154,6 +1170,7 @@ if ($isUnreleased) {
 
             if ($installDirNameMatch.Success) {
                 $installDir = [System.IO.Path]::Combine($lib, "steamapps\common\$($installDirNameMatch.Groups[1].Value)")
+                $gameLibrary = $lib
                 if ($nameMatch.Success) {
                     $gameName = $nameMatch.Groups[1].Value
                 }
@@ -1836,6 +1853,34 @@ Make sure SteamTools / OpenSteamTool is installed and has run at least once, the
     $manifestsReady = Ensure-LtLockedManifests -AppID $AppID -Lua $desiredLua -SteamRoot $steamPath
     if (-not $manifestsReady) {
         Write-Host "    [!] Some of the locked build's manifests are missing, so the download may not start." -ForegroundColor Yellow
+    }
+
+    # A game in a second library (D:\SteamLibrary next to C:\...\Steam) never
+    # showed the downgrade with the manifests only in the Steam folder's
+    # depotcache. Steam keeps a depotcache inside each library too, so the
+    # game's own library gets a copy as well.
+    if ($gameLibrary -and $gameInstalled) {
+        $libKey = $gameLibrary.TrimEnd('\', '/').ToLowerInvariant()
+        $rootKey = $steamPath.Replace('/', '\').TrimEnd('\', '/').ToLowerInvariant()
+        if ($libKey -ne $rootKey) {
+            $libCache = Join-Path $gameLibrary "steamapps\depotcache"
+            if (-not (Test-Path -LiteralPath $libCache)) {
+                try { New-Item -ItemType Directory -Path $libCache -Force | Out-Null } catch {}
+            }
+            $libPlaced = 0
+            foreach ($depot in $wantedPins.Keys) {
+                $name = "$depot`_$($wantedPins[$depot]).manifest"
+                $src = Join-Path $depotcacheDir $name
+                if (-not (Test-Path -LiteralPath $src)) { $src = Join-Path $vaultDir $name }
+                $dst = Join-Path $libCache $name
+                if ((Test-Path -LiteralPath $dst) -or -not (Test-Path -LiteralPath $src)) { continue }
+                if (Copy-LtManifest -From $src -To $dst) { $libPlaced++ }
+            }
+            if ($libPlaced -gt 0) {
+                Write-Host "    [+] Placed $libPlaced manifest(s) in the game's library: $libCache" -ForegroundColor Green
+                $manifestsWereAllPresent = $false
+            }
+        }
     }
 
     # Is the version lock already fully in place? We gate on the lock FILES, not
