@@ -1620,7 +1620,16 @@ $conflictingNames = @(
     "unsteam.dll",
     "cirno.dll",
     "cirno.ini",
-    "cracksteam_api64.dll"
+    "cracksteam_api64.dll",
+    "voices38.dll",
+    "steamclient_loader_x64.exe",
+    "SimpleSvm.sys",
+    "hyperkd.sys",
+    "hyperhv.dll",
+    "hyperevade.dll",
+    "hyperlog.dll",
+    "hyperlog.inf",
+    "kdserial.dll"
 )
 
 # For RE Engine + Denuvo titles dinput8.dll IS the REFramework helper we place on
