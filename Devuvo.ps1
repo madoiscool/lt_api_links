@@ -30,6 +30,53 @@ function Get-LtInstalledDepots {
     return $result
 }
 
+function Set-LtVersionPin {
+    # Pin every INSTALLED depot to its currently-installed manifest (never a stale
+    # GID that would downgrade the game); leave shared-runtime depots (not in
+    # InstalledDepots) exactly as written. Returns the active-pin count.
+    param([string]$LuaPath, [string]$AcfPath)
+    $lines = [System.IO.File]::ReadAllLines($LuaPath)
+    $rxSet = '^\s*(--)?\s*setmanifestid\s*\('
+    $depots = Get-LtInstalledDepots -AcfPath $AcfPath
+    $out = New-Object System.Collections.Generic.List[string]
+    $handled = @{}
+    foreach ($ln in $lines) {
+        if ($ln -match $rxSet) {
+            $dm = [regex]::Match($ln, 'setmanifestid\s*\(\s*(\d+)', 'IgnoreCase')
+            $depot = if ($dm.Success) { $dm.Groups[1].Value } else { $null }
+            if ($depot -and $depots.ContainsKey($depot)) {
+                $g = $depots[$depot]
+                $out.Add(('setManifestid({0}, "{1}", {2})' -f $depot, $g.manifest, $g.size))
+                $handled[$depot] = $true
+            } else {
+                $out.Add($ln); if ($depot) { $handled[$depot] = $true }
+            }
+        } else { $out.Add($ln) }
+    }
+    foreach ($depot in $depots.Keys) {
+        if (-not $handled.ContainsKey($depot)) {
+            $g = $depots[$depot]
+            $out.Add(('setManifestid({0}, "{1}", {2})' -f $depot, $g.manifest, $g.size))
+        }
+    }
+    [System.IO.File]::WriteAllLines($LuaPath, $out, (New-Object System.Text.UTF8Encoding($false)))
+    return @($out | Where-Object { $_ -match '^\s*setManifestid\(' }).Count
+}
+
+function Get-LtDisableUpdatesList {
+    # AppIDs listed in disable_updates.txt in this repo. $null when it can't be
+    # read, so a failed download never unpins a game that is meant to stay frozen.
+    try {
+        $url = "https://raw.githubusercontent.com/madoiscool/lt_api_links/main/disable_updates.txt"
+        $raw = (Invoke-WebRequest -UseBasicParsing -Uri $url -TimeoutSec 10 -Headers @{ "Cache-Control" = "no-cache" } -ErrorAction Stop).Content
+        $ids = @([regex]::Matches(($raw -replace '(?m)#.*$', ''), '\d+') | ForEach-Object { $_.Value })
+        return , $ids
+    }
+    catch {
+        return $null
+    }
+}
+
 function Clear-LtAcfReadOnly {
     # A read-only appmanifest stops Steam writing app state for that game at all,
     # so any install, update, downgrade or verify dies before it starts: the
@@ -784,7 +831,7 @@ $reportData = [ordered]@{
     OstActive            = $false
     OstEngine            = "none"
     OstTomlOk            = $false
-    UpdatesDisabled      = $false   # manifest pinning removed; always false now
+    UpdatesDisabled      = $false   # true for version-locked games and disable_updates.txt
 }
 
 Write-Host "Looking for Steam installation..." -ForegroundColor Cyan
@@ -1957,8 +2004,42 @@ else {
         $luaFiles = @()
     }
 
+    # Games in disable_updates.txt keep whatever build is installed: every
+    # installed depot is pinned to its current manifest, so Steam has nothing to
+    # update to. Never a downgrade. Taking a game off the list un-pins it on its
+    # next validation like any other game.
+    $disableUpdatesGames = Get-LtDisableUpdatesList
+    $pinsUntouched = $null -eq $disableUpdatesGames
+    if ($pinsUntouched) {
+        Write-Host "    [!] Couldn't load the update lock list, leaving manifest pins as they are." -ForegroundColor Yellow
+        $disableUpdatesGames = @()
+    }
+    $pinAcf = $null
+    if ($disableUpdatesGames -contains $AppID -and $gameLibrary) {
+        $pinAcf = [System.IO.Path]::Combine($gameLibrary, "steamapps\appmanifest_$AppID.acf")
+        if (-not (Test-Path -LiteralPath $pinAcf)) { $pinAcf = $null }
+    }
+
     foreach ($luaFile in $luaFiles) {
         $reportData.LuaFileFound = $true
+        if ($pinsUntouched) { continue }
+
+        if ($disableUpdatesGames -contains $AppID) {
+            if (-not $pinAcf) {
+                Write-Host "    [-] $($luaFile.Name): couldn't find the appmanifest to read the installed build, updates not disabled." -ForegroundColor Yellow
+                continue
+            }
+            try { Copy-Item -LiteralPath $luaFile.FullName -Destination ($luaFile.FullName + ".bak_" + (Get-Date -Format 'yyyyMMdd_HHmmss')) -Force } catch {}
+            $pinCount = Set-LtVersionPin -LuaPath $luaFile.FullName -AcfPath $pinAcf
+            $reportData.UpdatesDisabled = ($pinCount -gt 0)
+            if ($pinCount -gt 0) {
+                Write-Host "    [+] $($luaFile.Name): locked $pinCount depot(s) to the installed build, Steam updates disabled." -ForegroundColor Green
+            }
+            else {
+                Write-Host "    [*] $($luaFile.Name): nothing to pin (no installed depots found), left as is." -ForegroundColor DarkGray
+            }
+            continue
+        }
 
         # Re-comment any active setManifestid so the game tracks the latest
         # manifest. Also repairs a stale pin left by an older build.
