@@ -66,15 +66,24 @@ function Set-LtVersionPin {
 function Get-LtDisableUpdatesList {
     # AppIDs listed in disable_updates.txt in this repo. $null when it can't be
     # read, so a failed download never unpins a game that is meant to stay frozen.
-    try {
-        $url = "https://raw.githubusercontent.com/madoiscool/lt_api_links/main/disable_updates.txt"
-        $raw = (Invoke-WebRequest -UseBasicParsing -Uri $url -TimeoutSec 10 -Headers @{ "Cache-Control" = "no-cache" } -ErrorAction Stop).Content
-        $ids = @([regex]::Matches(($raw -replace '(?m)#.*$', ''), '\d+') | ForEach-Object { $_.Value })
-        return , $ids
+    # The contents API first: raw.githubusercontent caches for 5 minutes and
+    # ignores query strings, so a freshly added game was missed there.
+    $sources = @(
+        @{ Url = "https://api.github.com/repos/madoiscool/lt_api_links/contents/disable_updates.txt?ref=main"
+           Headers = @{ "Accept" = "application/vnd.github.raw"; "User-Agent" = "LuaToolsValidator" } },
+        @{ Url = "https://raw.githubusercontent.com/madoiscool/lt_api_links/main/disable_updates.txt"
+           Headers = @{} }
+    )
+    foreach ($s in $sources) {
+        try {
+            $raw = (Invoke-WebRequest -UseBasicParsing -Uri $s.Url -Headers $s.Headers -TimeoutSec 10 -ErrorAction Stop).Content
+            if ($raw -is [byte[]]) { $raw = [System.Text.Encoding]::UTF8.GetString($raw) }
+            $ids = @([regex]::Matches(($raw -replace '(?m)#.*$', ''), '\d+') | ForEach-Object { $_.Value })
+            return , $ids
+        }
+        catch { }
     }
-    catch {
-        return $null
-    }
+    return $null
 }
 
 function Clear-LtAcfReadOnly {
