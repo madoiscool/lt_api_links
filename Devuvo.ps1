@@ -457,6 +457,132 @@ function Ensure-LtLockedManifests {
     return $true
 }
 
+function Remove-LtNewerManifests {
+    # A manifest for any other build of a locked depot. With one of those in
+    # depotcache Steam can keep reading it and never offer the downgrade, which is
+    # why wiping the Steam folder fixed it for Lark. Only the locked depots are
+    # touched, and the pinned manifest is always kept. Run with Steam closed.
+    param([string[]]$Dirs, [hashtable]$Pins)
+    $removed = 0
+    foreach ($dir in $Dirs) {
+        if (-not $dir -or -not (Test-Path -LiteralPath $dir)) { continue }
+        foreach ($depot in $Pins.Keys) {
+            $keep = "$depot`_$($Pins[$depot]).manifest"
+            foreach ($f in @(Get-ChildItem -LiteralPath $dir -Filter "$depot`_*.manifest" -File -ErrorAction SilentlyContinue)) {
+                if ($f.Name -eq $keep) { continue }
+                try {
+                    if ($f.IsReadOnly) { $f.IsReadOnly = $false }
+                    Remove-Item -LiteralPath $f.FullName -Force -ErrorAction Stop
+                    $removed++
+                }
+                catch { }
+            }
+        }
+    }
+    return $removed
+}
+
+function Stop-LtSteam {
+    param([string]$SteamRoot)
+    if (-not (Get-Process -Name "steam" -ErrorAction SilentlyContinue)) { return }
+    $exe = Join-Path $SteamRoot "steam.exe"
+    if (Test-Path -LiteralPath $exe) {
+        try { Start-Process -FilePath $exe -ArgumentList "-shutdown" } catch { }
+    }
+    for ($i = 0; $i -lt 30; $i++) {
+        if (-not (Get-Process -Name "steam" -ErrorAction SilentlyContinue)) { return }
+        Start-Sleep -Seconds 1
+    }
+    Stop-Process -Name "steam" -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 2
+}
+
+function Invoke-LtLockedValidate {
+    # The "update" to the pinned build is often so small that it is done before
+    # the library ever shows it, or it never shows at all. steam://validate makes
+    # Steam check every file against the pinned manifests and fetch what differs,
+    # so the downgrade lands either way. Steam is restarted first so OST loads the
+    # locked lua, and stale manifests for other builds are cleared while it is down.
+    param([string]$AppID, [string]$SteamRoot, [string[]]$CacheDirs, [hashtable]$Pins)
+    Write-Host "    [*] Restarting Steam to load the lock..." -ForegroundColor DarkGray
+    Stop-LtSteam -SteamRoot $SteamRoot
+    $gone = Remove-LtNewerManifests -Dirs $CacheDirs -Pins $Pins
+    if ($gone -gt 0) {
+        Write-Host "    [+] Removed $gone manifest(s) for other builds of the locked depots." -ForegroundColor Green
+    }
+    $exe = Join-Path $SteamRoot "steam.exe"
+    if (-not (Test-Path -LiteralPath $exe)) { return $false }
+    try {
+        Start-Process -FilePath $exe
+        for ($i = 0; $i -lt 20 -and -not (Get-Process -Name "steam" -ErrorAction SilentlyContinue); $i++) { Start-Sleep -Seconds 1 }
+        Start-Sleep -Seconds 15
+        Start-Process "steam://validate/$AppID"
+        Write-Host "    [+] Asked Steam to verify the game files." -ForegroundColor Green
+        return $true
+    }
+    catch {
+        Write-Host "    [!] Could not start the Steam file check: $($_.Exception.Message)" -ForegroundColor Yellow
+        return $false
+    }
+}
+
+function Reset-LtSteamFiles {
+    # Lark's fix for a downgrade Steam refuses to start: delete everything in the
+    # Steam folder except his list and let steam.exe download a clean copy. The
+    # engine goes too, so it has to be installed again afterwards. Returns how many
+    # items could not be removed, or -1 if the folder doesn't look like Steam.
+    param([string]$SteamRoot)
+    $keepDirs  = @("appcache", "config", "steam", "steamapps", "userdata")
+    $keepFiles = @("steam.exe")
+
+    if (-not $SteamRoot) { return -1 }
+    $root = [System.IO.Path]::GetFullPath($SteamRoot).TrimEnd('\')
+    if ($root -eq [System.IO.Path]::GetPathRoot($root).TrimEnd('\')) { return -1 }
+    if (-not (Test-Path -LiteralPath (Join-Path $root "steam.exe"))) { return -1 }
+    if (-not (Test-Path -LiteralPath (Join-Path $root "steamapps"))) { return -1 }
+
+    Stop-LtSteam -SteamRoot $root
+    Stop-Process -Name "steamwebhelper" -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 2
+
+    $failed = 0
+    foreach ($item in @(Get-ChildItem -LiteralPath $root -Force -ErrorAction SilentlyContinue)) {
+        $name = $item.Name.ToLowerInvariant()
+        if ($item.PSIsContainer -and $keepDirs -contains $name) { continue }
+        if (-not $item.PSIsContainer -and $keepFiles -contains $name) { continue }
+        # A junction could point anywhere, and a recursive delete would follow it.
+        if ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) { continue }
+        try { Remove-Item -LiteralPath $item.FullName -Recurse -Force -ErrorAction Stop }
+        catch { $failed++ }
+    }
+    return $failed
+}
+
+function Invoke-LtSteamReset {
+    # depotcache goes with the wipe, so the locked game's manifests are put back
+    # from the vault before Steam starts. Otherwise the downgrade has nothing to use.
+    param([string]$SteamRoot, [string]$VaultDir)
+    Write-Host "    [*] Closing Steam and removing its program files..." -ForegroundColor Cyan
+    $failed = Reset-LtSteamFiles -SteamRoot $SteamRoot
+    if ($failed -lt 0) {
+        Write-Host "    [-] $SteamRoot doesn't look like a Steam folder, so nothing was removed." -ForegroundColor Red
+        return $false
+    }
+    if ($failed -gt 0) {
+        Write-Host "    [!] $failed item(s) were in use and could not be removed." -ForegroundColor Yellow
+    }
+    $cache = Join-Path $SteamRoot "depotcache"
+    $saved = @(Get-ChildItem -LiteralPath $VaultDir -Filter *.manifest -File -ErrorAction SilentlyContinue)
+    if ($saved.Count -gt 0) {
+        New-Item -ItemType Directory -Force -Path $cache | Out-Null
+        foreach ($m in $saved) { Copy-Item -LiteralPath $m.FullName -Destination $cache -Force -ErrorAction SilentlyContinue }
+        Write-Host "    [+] Put back $($saved.Count) locked manifest(s)." -ForegroundColor Green
+    }
+    Write-Host "    [+] Done. Starting Steam so it can download a clean copy of itself..." -ForegroundColor Green
+    try { Start-Process -FilePath (Join-Path $SteamRoot "steam.exe") } catch { }
+    return $true
+}
+
 # RE Engine + Denuvo titles need REFramework's dinput8.dll in the game folder or
 # they crash on new-game. The one dll below is the newest REFramework build and
 # covers every one of these games (it detects the game at runtime), so we drop
@@ -1955,8 +2081,97 @@ Make sure SteamTools / OpenSteamTool is installed and has run at least once, the
     # were already true on entry, the lock is set and we skip to the report. If we
     # had to place anything just now, Steam will show the resulting update; the user
     # runs it and re-validates.
-    if ($luaWasCorrect -and $manifestsWereAllPresent) {
+    #
+    # The lock files alone are not proof though. When the downgrade glitches Steam
+    # shows no update at all, and the game sat on the new build while this let it
+    # through. InstalledDepots has the manifest each depot is really installed at,
+    # so a locked depot at any other gid has not downgraded yet. Depots that are not
+    # installed (an unused language, say) are skipped.
+    $acfPath = if ($gameLibrary) { [System.IO.Path]::Combine($gameLibrary, "steamapps\appmanifest_$AppID.acf") } else { $null }
+    $installedNow = if ($acfPath) { Get-LtInstalledDepots -AcfPath $acfPath } else { @{} }
+    $offBuild = @($wantedPins.Keys | Where-Object { $installedNow.ContainsKey($_) -and $installedNow[$_].manifest -ne $wantedPins[$_] })
+
+    $cacheDirs = @($depotcacheDir)
+    if ($gameLibrary) { $cacheDirs += (Join-Path $gameLibrary "steamapps\depotcache") }
+
+    # Forced checks are counted so a game whose acf never catches up can't trap
+    # anyone in a loop. After two it goes on to the report like it used to.
+    $triesFile = Join-Path $vaultDir "validate_tries.txt"
+    $tries = 0
+    if (Test-Path -LiteralPath $triesFile) {
+        [int]::TryParse(([string](Get-Content -LiteralPath $triesFile -Raw)).Trim(), [ref]$tries) | Out-Null
+    }
+
+    $lockSet = $luaWasCorrect -and $manifestsWereAllPresent
+    if ($lockSet -and $offBuild.Count -eq 0) {
+        if (Test-Path -LiteralPath $triesFile) { Remove-Item -LiteralPath $triesFile -Force -ErrorAction SilentlyContinue }
         Write-Host "    [+] Version lock already set (lua + manifests in place). Continuing to the report." -ForegroundColor Green
+    }
+    elseif ($lockSet -and $tries -ge 2) {
+        # Two file checks didn't move it. Last resort is Lark's Steam reset, offered
+        # once per game and only with the user's OK. Afterwards the counter drops back
+        # to 1 so the next run (with the engine reinstalled) gets one more file check.
+        $resetFile = Join-Path $vaultDir "steam_reset.txt"
+        if (-not (Test-Path -LiteralPath $resetFile)) {
+            Write-Host ""
+            Write-Host "    [!] Steam still won't move $($vl.GameName) to the locked build after two file checks." -ForegroundColor Yellow
+            Write-Host "        Resetting Steam usually fixes this. Steam closes and everything in its folder" -ForegroundColor Yellow
+            Write-Host "        is deleted except appcache, config, steam, steamapps, userdata and steam.exe," -ForegroundColor Yellow
+            Write-Host "        then Steam downloads a clean copy of itself. Installed games are kept." -ForegroundColor Yellow
+            Write-Host "        You will need to install the engine again afterwards." -ForegroundColor Yellow
+            Write-Host ""
+            Write-Host "    Press Y to reset Steam now, or any other key to skip." -ForegroundColor Cyan
+            $key = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+            if ("$($key.Character)" -eq "y") {
+                try { Set-Content -LiteralPath $resetFile -Value (Get-Date -Format s) -ErrorAction Stop } catch { }
+                try { Set-Content -LiteralPath $triesFile -Value 1 -ErrorAction Stop } catch { }
+                $null = Invoke-LtSteamReset -SteamRoot $steamPath -VaultDir $vaultDir
+                Show-LuaError -Title "Steam was reset, reinstall the engine then validate again" -Message @"
+Steam's program files were deleted and Steam is now downloading a clean copy of itself. Your installed games were not touched.
+
+Do this now:
+  1. Let Steam finish updating and sign in if it asks.
+  2. Install the engine again: open the TokeerDRM app and let it install OpenSteamTool,
+     or open the LuaTools app, go to Mode, and choose BetterSteamTools.
+  3. Run this validation again. It will start the file check that moves the game to the right build.
+"@
+                Write-Host "`nPress any key to exit..."
+                $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+                exit
+            }
+        }
+        Write-Host "    [!] Steam still lists $($offBuild.Count) locked depot(s) on another build. Continuing to the report anyway." -ForegroundColor Yellow
+    }
+    elseif ($gameInstalled) {
+        if ($lockSet) {
+            Write-Host "    [!] The lock is set but $($offBuild.Count) depot(s) never downgraded. Forcing a file check..." -ForegroundColor Yellow
+        }
+        try { Set-Content -LiteralPath $triesFile -Value ($tries + 1) -ErrorAction Stop } catch { }
+        $started = Invoke-LtLockedValidate -AppID $AppID -SteamRoot $steamPath -CacheDirs $cacheDirs -Pins $wantedPins
+        $how = if ($started) {
+            "Steam is now verifying the game files. That check is what moves it to the right build."
+        } else {
+            "Start the check yourself: right-click the game in Steam, Properties, Installed Files, Verify integrity of game files."
+        }
+        Show-LuaError -Title "Let Steam finish, then validate again" -Message @"
+$($vl.GameName) only works on build $($vl.BuildId). Its newest Steam update breaks the activation, so we locked the supported version on your PC with a version-locked lua.
+
+$how
+
+Do this now:
+  1. Leave Steam open and let it finish the check, plus any download it starts.
+  2. Wait until Steam lists the game as fully installed (not Queued, Downloading, or Updating).
+  3. Run this validation again.
+
+Your game files are not deleted and this is not a reinstall, so it only downloads
+the parts that actually differ between the two builds.
+
+If Steam never starts the check, close it fully, open it again, then right-click
+the game, Properties, Installed Files, Verify integrity of game files.
+"@
+        Write-Host "`nPress any key to exit..."
+        $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+        exit
     }
     else {
         Show-LuaError -Title "Update this game, then validate again" -Message @"
