@@ -2678,7 +2678,10 @@ try {
     if ($response.code) {
         $pasteCode = $response.code
 
-        Set-Clipboard -Value $pasteCode
+        # Another app holding the clipboard makes this throw, and it must not take
+        # the code down with it. The upload already worked.
+        $clipOk = $true
+        try { Set-Clipboard -Value $pasteCode -ErrorAction Stop } catch { $clipOk = $false }
         Write-Host "`n    [+] Report uploaded successfully!" -ForegroundColor Green
 
         # For games that need launch options written, defer the D-Report code display
@@ -2700,7 +2703,8 @@ try {
             Write-Host "    ||                                        ||" -ForegroundColor Magenta
             Write-Host "    ============================================" -ForegroundColor Magenta
             Write-Host ""
-            Write-Host "    (copied to clipboard)" -ForegroundColor Green
+            if ($clipOk) { Write-Host "    (copied to clipboard)" -ForegroundColor Green }
+            else { Write-Host "    (could not copy it, type the code above into your ticket)" -ForegroundColor Yellow }
             Send-ReportToTicket -Code $pasteCode
         }
         else {
@@ -3144,7 +3148,8 @@ if ($deferCodeDisplay -and $pasteCode) {
     Write-Host "    ||                                        ||" -ForegroundColor Magenta
     Write-Host "    ============================================" -ForegroundColor Magenta
     Write-Host ""
-    Write-Host "    (copied to clipboard)" -ForegroundColor Green
+    if ($clipOk) { Write-Host "    (copied to clipboard)" -ForegroundColor Green }
+    else { Write-Host "    (could not copy it, type the code above into your ticket)" -ForegroundColor Yellow }
     Send-ReportToTicket -Code $pasteCode
     Write-Host ""
     Write-Host "Press any key to exit..." -ForegroundColor Yellow
