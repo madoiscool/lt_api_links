@@ -583,93 +583,6 @@ function Invoke-LtSteamReset {
     return $true
 }
 
-$ltEngineFiles = @("OpenSteamTool.dll", "dwmapi.dll", "xinput1_4.dll")
-
-function Get-LtBstEngine {
-    # The engine files from the current BetterSteamTools release, the same build
-    # TokeerDRM installs, unpacked once per tag under LOCALAPPDATA. $null on failure.
-    try {
-        $rel = Invoke-RestMethod -UseBasicParsing -Uri "https://luastools.xyz/ost/latest" -TimeoutSec 15 -ErrorAction Stop
-    }
-    catch { return $null }
-    $asset = @($rel.assets | Where-Object { $_.name -like "*-Release.zip" }) | Select-Object -First 1
-    if (-not $asset -or -not $rel.tag_name) { return $null }
-
-    $dir = Join-Path $env:LOCALAPPDATA "LuaTools\bst-engine\$($rel.tag_name)"
-    $have = @($ltEngineFiles | Where-Object { Test-Path -LiteralPath (Join-Path $dir $_) })
-    if ($have.Count -eq $ltEngineFiles.Count) { return $dir }
-
-    $zip = Join-Path $env:TEMP "lt_bst_$($rel.tag_name).zip"
-    $stage = Join-Path $env:TEMP "lt_bst_$($rel.tag_name)"
-    try {
-        $oldProgress = $ProgressPreference
-        $ProgressPreference = 'SilentlyContinue'
-        try { Invoke-WebRequest -UseBasicParsing -Uri $asset.browser_download_url -OutFile $zip -TimeoutSec 120 -ErrorAction Stop }
-        finally { $ProgressPreference = $oldProgress }
-        if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue }
-        Expand-Archive -LiteralPath $zip -DestinationPath $stage -Force -ErrorAction Stop
-        New-Item -ItemType Directory -Path $dir -Force | Out-Null
-        foreach ($name in $ltEngineFiles) {
-            $f = Get-ChildItem -LiteralPath $stage -Filter $name -Recurse -File -ErrorAction SilentlyContinue | Select-Object -First 1
-            if (-not $f) { return $null }
-            Copy-Item -LiteralPath $f.FullName -Destination (Join-Path $dir $name) -Force -ErrorAction Stop
-        }
-        return $dir
-    }
-    catch { return $null }
-    finally {
-        Remove-Item -LiteralPath $zip -Force -ErrorAction SilentlyContinue
-        Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue
-    }
-}
-
-function Repair-LtEngine {
-    # A version lock only holds if Steam loads BetterSteamTools, since that is what
-    # applies the setManifestid pins. Other managers drop their own build under the
-    # same OpenSteamTool.dll name, and with one of those Steam ignores the pins, so
-    # no number of file checks ever moves the game. That is also why Lark's reset
-    # worked: the engine had to be installed fresh afterwards. Swaps in the release
-    # files when they differ and returns $true if anything was replaced.
-    param([string]$SteamRoot)
-    $src = Get-LtBstEngine
-    if (-not $src) {
-        Write-Host "    [!] Could not download BetterSteamTools to check the engine, skipping that check." -ForegroundColor Yellow
-        return $false
-    }
-    $stale = @($ltEngineFiles | Where-Object {
-        $mine = Join-Path $SteamRoot $_
-        -not (Test-Path -LiteralPath $mine) -or
-        (Get-FileHash -LiteralPath $mine -Algorithm SHA256).Hash -ne (Get-FileHash -LiteralPath (Join-Path $src $_) -Algorithm SHA256).Hash
-    })
-    if ($stale.Count -eq 0) {
-        Write-Host "    [+] Engine is the current BetterSteamTools build." -ForegroundColor Green
-        return $false
-    }
-
-    Write-Host "    [!] Steam's engine is not the current BetterSteamTools build ($($stale -join ', ')), so the lock is being ignored. Replacing it..." -ForegroundColor Yellow
-    Stop-LtSteam -SteamRoot $SteamRoot
-    $bak = Join-Path $env:LOCALAPPDATA ("LuaTools\engine-backup\" + (Get-Date -Format 'yyyyMMdd_HHmmss'))
-    $replaced = 0
-    foreach ($name in $stale) {
-        $mine = Join-Path $SteamRoot $name
-        try {
-            if (Test-Path -LiteralPath $mine) {
-                New-Item -ItemType Directory -Path $bak -Force | Out-Null
-                Copy-Item -LiteralPath $mine -Destination $bak -Force -ErrorAction SilentlyContinue
-            }
-            Copy-Item -LiteralPath (Join-Path $src $name) -Destination $mine -Force -ErrorAction Stop
-            $replaced++
-        }
-        catch {
-            Write-Host "    [-] Could not replace $($name): $($_.Exception.Message)" -ForegroundColor Red
-        }
-    }
-    if ($replaced -gt 0) {
-        Write-Host "    [+] Installed BetterSteamTools ($replaced file(s)). The old files are in $bak" -ForegroundColor Green
-    }
-    return ($replaced -gt 0)
-}
-
 # RE Engine + Denuvo titles need REFramework's dinput8.dll in the game folder or
 # they crash on new-game. The one dll below is the newest REFramework build and
 # covers every one of these games (it detects the game at runtime), so we drop
@@ -2190,47 +2103,27 @@ Make sure SteamTools / OpenSteamTool is installed and has run at least once, the
     }
 
     $lockSet = $luaWasCorrect -and $manifestsWereAllPresent
-
-    # Whenever the game is not on the locked build yet, make sure the engine that
-    # applies the pins is the right one first. A fresh engine gets its own two file
-    # checks before anyone is offered the Steam reset.
-    if (-not ($lockSet -and $offBuild.Count -eq 0)) {
-        if (Repair-LtEngine -SteamRoot $steamPath) {
-            $tries = 0
-            if (-not $gameInstalled) { try { Start-Process -FilePath (Join-Path $steamPath "steam.exe") } catch { } }
-        }
-    }
-
     if ($lockSet -and $offBuild.Count -eq 0) {
         if (Test-Path -LiteralPath $triesFile) { Remove-Item -LiteralPath $triesFile -Force -ErrorAction SilentlyContinue }
         Write-Host "    [+] Version lock already set (lua + manifests in place). Continuing to the report." -ForegroundColor Green
     }
     elseif ($lockSet -and $tries -ge 2) {
-        # Two file checks didn't move it. Last resort is Lark's Steam reset, offered
-        # once per game and only with the user's OK. Afterwards the counter drops back
-        # to 1 so the next run (with the engine reinstalled) gets one more file check.
+        # Two file checks didn't move it, so run Lark's Steam reset, once per game.
+        # No prompt: the validator app has no keyboard to answer one with. Afterwards
+        # the counter drops back to 1 so the next run (with the engine reinstalled)
+        # gets one more file check.
         $resetFile = Join-Path $vaultDir "steam_reset.txt"
-        if ($env:LUATOOLS_APP_MODE -eq '1' -and -not (Test-Path -LiteralPath $resetFile)) {
-            # The validator app has no keyboard to answer Y with, so don't ask there.
+        if (-not (Test-Path -LiteralPath $resetFile)) {
             Write-Host ""
             Write-Host "    [!] Steam still won't move $($vl.GameName) to the locked build after two file checks." -ForegroundColor Yellow
-            Write-Host "        A Steam reset usually fixes this. Ask staff in your ticket if it keeps happening." -ForegroundColor Yellow
-        }
-        elseif (-not (Test-Path -LiteralPath $resetFile)) {
+            Write-Host "        Resetting Steam. It closes and everything in its folder is deleted except" -ForegroundColor Yellow
+            Write-Host "        appcache, config, steam, steamapps, userdata and steam.exe, then Steam downloads" -ForegroundColor Yellow
+            Write-Host "        a clean copy of itself. Installed games are kept." -ForegroundColor Yellow
             Write-Host ""
-            Write-Host "    [!] Steam still won't move $($vl.GameName) to the locked build after two file checks." -ForegroundColor Yellow
-            Write-Host "        Resetting Steam usually fixes this. Steam closes and everything in its folder" -ForegroundColor Yellow
-            Write-Host "        is deleted except appcache, config, steam, steamapps, userdata and steam.exe," -ForegroundColor Yellow
-            Write-Host "        then Steam downloads a clean copy of itself. Installed games are kept." -ForegroundColor Yellow
-            Write-Host "        You will need to install the engine again afterwards." -ForegroundColor Yellow
-            Write-Host ""
-            Write-Host "    Press Y to reset Steam now, or any other key to skip." -ForegroundColor Cyan
-            $key = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
-            if ("$($key.Character)" -eq "y") {
-                try { Set-Content -LiteralPath $resetFile -Value (Get-Date -Format s) -ErrorAction Stop } catch { }
-                try { Set-Content -LiteralPath $triesFile -Value 1 -ErrorAction Stop } catch { }
-                $null = Invoke-LtSteamReset -SteamRoot $steamPath -VaultDir $vaultDir
-                Show-LuaError -Title "Steam was reset, reinstall the engine then validate again" -Message @"
+            try { Set-Content -LiteralPath $resetFile -Value (Get-Date -Format s) -ErrorAction Stop } catch { }
+            try { Set-Content -LiteralPath $triesFile -Value 1 -ErrorAction Stop } catch { }
+            $null = Invoke-LtSteamReset -SteamRoot $steamPath -VaultDir $vaultDir
+            Show-LuaError -Title "Steam was reset, reinstall the engine then validate again" -Message @"
 Steam's program files were deleted and Steam is now downloading a clean copy of itself. Your installed games were not touched.
 
 Do this now:
@@ -2239,10 +2132,9 @@ Do this now:
      or open the LuaTools app, go to Mode, and choose BetterSteamTools.
   3. Run this validation again. It will start the file check that moves the game to the right build.
 "@
-                Write-Host "`nPress any key to exit..."
-                $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
-                exit
-            }
+            Write-Host "`nPress any key to exit..."
+            $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+            exit
         }
         Write-Host "    [!] Steam still lists $($offBuild.Count) locked depot(s) on another build. Continuing to the report anyway." -ForegroundColor Yellow
     }
