@@ -2112,7 +2112,13 @@ Make sure SteamTools / OpenSteamTool is installed and has run at least once, the
         # once per game and only with the user's OK. Afterwards the counter drops back
         # to 1 so the next run (with the engine reinstalled) gets one more file check.
         $resetFile = Join-Path $vaultDir "steam_reset.txt"
-        if (-not (Test-Path -LiteralPath $resetFile)) {
+        if ($env:LUATOOLS_APP_MODE -eq '1' -and -not (Test-Path -LiteralPath $resetFile)) {
+            # The validator app has no keyboard to answer Y with, so don't ask there.
+            Write-Host ""
+            Write-Host "    [!] Steam still won't move $($vl.GameName) to the locked build after two file checks." -ForegroundColor Yellow
+            Write-Host "        A Steam reset usually fixes this. Ask staff in your ticket if it keeps happening." -ForegroundColor Yellow
+        }
+        elseif (-not (Test-Path -LiteralPath $resetFile)) {
             Write-Host ""
             Write-Host "    [!] Steam still won't move $($vl.GameName) to the locked build after two file checks." -ForegroundColor Yellow
             Write-Host "        Resetting Steam usually fixes this. Steam closes and everything in its folder" -ForegroundColor Yellow
