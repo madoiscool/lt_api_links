@@ -129,13 +129,20 @@ $downloadPath = Join-Path $tempRoot "LuaToolsValidator.latest.exe"
 New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
 New-Item -ItemType Directory -Force -Path $installRoot | Out-Null
 
+# Update the tag on each new release.
+$validatorTag = "v1.0.1"
 $validatorUrls = @(
+    # Our Cloudflare mirror first: some networks have a bad route to the Forgejo
+    # box and time out on it.
+    "https://luastools.xyz/app/validator?tag=$validatorTag&name=LuaToolsValidator.exe"
     # Forgejo (self-hosted, not the flagged github account): works anonymously and
-    # on networks that block github.com. Update the tag on each new release.
-    "https://git.lua.tools/luatools-dedivision/LuaToolsValidator/releases/download/v1.0.1/LuaToolsValidator.exe"
+    # on networks that block github.com.
+    "https://git.lua.tools/luatools-dedivision/LuaToolsValidator/releases/download/$validatorTag/LuaToolsValidator.exe"
 )
 
 $downloaded = $false
+$oldProgress = $ProgressPreference
+$ProgressPreference = "SilentlyContinue"   # the progress bar makes downloads crawl
 foreach ($url in $validatorUrls) {
     try {
         Write-Host "[*] Downloading latest LuaTools Validator..." -ForegroundColor Cyan
@@ -144,7 +151,8 @@ foreach ($url in $validatorUrls) {
             "Cache-Control" = "no-cache"
             "Pragma"        = "no-cache"
         }
-        Invoke-WebRequest -Uri $url -OutFile $downloadPath -UseBasicParsing -Headers $headers -TimeoutSec 25 -ErrorAction Stop
+        Remove-Item -LiteralPath $downloadPath -Force -ErrorAction SilentlyContinue
+        Invoke-WebRequest -Uri $url -OutFile $downloadPath -UseBasicParsing -Headers $headers -TimeoutSec 60 -ErrorAction Stop
 
         if ((Test-Path -LiteralPath $downloadPath) -and ((Get-Item -LiteralPath $downloadPath).Length -gt 100KB)) {
             $downloaded = $true
@@ -155,6 +163,7 @@ foreach ($url in $validatorUrls) {
         Write-Host "    [!] Mirror failed: $($_.Exception.Message)" -ForegroundColor Yellow
     }
 }
+$ProgressPreference = $oldProgress
 
 if (-not $downloaded) {
     Write-Host "[-] Could not download LuaTools Validator from any mirror." -ForegroundColor Red
