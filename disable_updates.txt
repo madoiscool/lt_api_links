@@ -2,3 +2,4 @@
 # One AppID per line, anything after # is ignored.
 # Remove a line and that game's next validation lets it update again.
 4115450  # Phantom Blade Zero
+3321460  # Crimson Desert
